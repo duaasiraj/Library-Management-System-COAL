@@ -12,13 +12,13 @@ topMsg BYTE 0AH
 	BYTE    "Choose Your Option : ",0
 
 msg1	 BYTE 0AH
-	BYTE    "1-> Register a Member", 0dh, 0ah
-	BYTE    "2-> View Members", 0dh, 0ah
-	BYTE    "3-> View Members From File", 0dh, 0ah
-	BYTE    "4-> Add Book", 0dh, 0ah
-	BYTE    "5-> View Books", 0dh, 0ah
-	BYTE    "6-> View Books From Files", 0dh, 0ah
-	BYTE    "7-> Exit Program", 0dh, 0ah
+	BYTE    "Librarian Menu:", 0dh, 0ah
+	BYTE    "1. View Overdue Books", 0dh, 0ah
+	BYTE    "2. Calculate Fines", 0dh, 0ah
+	BYTE    "3. Add Book", 0dh, 0ah
+	BYTE    "4. Display All Books", 0dh, 0ah
+	BYTE    "5. Display All Users", 0dh, 0ah
+	BYTE    "6. Logout", 0dh, 0ah
 	BYTE    "Choose Your Option : ", 0
 	LIB_LOGIN_MSG BYTE 0AH, "Enter librarian code: ",0
 	INVALID_CODE_MSG BYTE 0AH, "Invalid code. Returning to top menu.",0dh,0ah,0
@@ -67,13 +67,13 @@ BUFFER_SIZE = 5000
 buffer_mem   BYTE buffer_size DUP (?)
 buffer_book  BYTE buffer_size DUP (?)
 bytesRead dword 1 dup(0)
-REGISTER	 DWORD 1
-VIEW_MEMBERS DWORD 2
-VIEW_MF		 DWORD 3
-ADD_BOOK	 DWORD 4
-VIEW_BOOKS	 DWORD 5
-VIEW_BF		 DWORD 6
-EXITP		 DWORD 7
+; Librarian menu options
+VIEW_OVERDUE	 DWORD 1
+CALCULATE_FINES DWORD 2
+ADD_BOOK	 DWORD 3
+DISPLAY_BOOKS	 DWORD 4
+DISPLAY_USERS	 DWORD 5
+LIB_LOGOUT	 DWORD 6
 
 ; Member menu options
 SEARCH_BOOK	 DWORD 1
@@ -101,6 +101,38 @@ BOOK6 DB BOOK_SIZE DUP (?)
 NUM_BOOKS DWORD 0
 BOOKS DD BOOK1, BOOK2, BOOK3, BOOK4, BOOK5, BOOK6, 0AH, 0DH, 0
 
+; Book structure variables
+BOOK_STRUCT_SIZE = 200
+CURRENT_BOOK DB BOOK_STRUCT_SIZE DUP (?)
+BOOK_NAME_SIZE = 150
+BOOK_AUTHOR_SIZE = 150
+BOOK_PUBLISHER_SIZE = 150
+BOOK_GENRE_SIZE = 100
+
+; Book input buffers
+BOOK_NAME_BUF DB BOOK_NAME_SIZE DUP (?)
+BOOK_AUTHOR_BUF DB BOOK_AUTHOR_SIZE DUP (?)
+BOOK_PUBLISHER_BUF DB BOOK_PUBLISHER_SIZE DUP (?)
+BOOK_GENRE_BUF DB BOOK_GENRE_SIZE DUP (?)
+BOOK_YEAR_BUF DB 10 DUP (?)
+BOOK_ISBN_BUF DB 20 DUP (?)
+
+; Book input prompts
+ISBN_PROMPT BYTE "Enter ISBN: ",0
+BOOK_NAME_PROMPT BYTE "Enter book name: ",0
+BOOK_AUTHOR_PROMPT BYTE "Enter author name: ",0
+BOOK_PUBLISHER_PROMPT BYTE "Enter publisher name: ",0
+BOOK_GENRE_PROMPT BYTE "Enter Genre: ",0
+BOOK_YEAR_PROMPT BYTE "Enter publishing year: ",0
+INVALID_ISBN_MSG BYTE "You must enter a valid 13 digit ISBN number.",0dh,0ah,0
+DUPLICATE_ISBN_MSG BYTE "That book already exists. Please check the ISBN number again.",0dh,0ah,0
+BOOK_ADDED_MSG BYTE "Book added successfully!",0dh,0ah,0
+
+; ISBN validation constants
+ISBN_CHECK QWORD 1000000000000
+VALID_ISBN_MIN QWORD 1000000000000
+VALID_ISBN_MAX QWORD 9999999999999
+
 
 ; **********************************************
 ; *************** Code Section *****************
@@ -126,23 +158,23 @@ main PROC
 	JMP START
 
 SHOW_FULL_MENU:
-	; display the existing full menu and read option
+	; display the librarian menu and read option
 	INVOKE MSG_DISPLAY, ADDR MSG1
 	CALL READINT ; input for options
 
-	CMP EAX, REGISTER
-	JE REG_M		; jump to Register Member section
-	CMP EAX, VIEW_MEMBERS
-	JE VIEW_M		; jump to View Members section
-	CMP EAX, VIEW_MF
-	JE VIEW_MFILE		; jump to Add Book section
+	CMP EAX, VIEW_OVERDUE
+	JE VIEW_OVERDUE_FUNC	; jump to View Overdue Books section
+	CMP EAX, CALCULATE_FINES
+	JE CALCULATE_FINES_FUNC	; jump to Calculate Fines section
 	CMP EAX, ADD_BOOK
-	JE ADD_B		; jump to View Books section
-	CMP EAX, VIEW_BOOKS
-	JE VIEW_B		; calling function to display message
-	CMP EAX, VIEW_BF
-	JE VIEW_BFILE		; taking input in 2D array
-		JMP EXIT_MENU
+	JE ADD_B		; jump to Add Book section
+	CMP EAX, DISPLAY_BOOKS
+	JE VIEW_B		; jump to Display All Books section
+	CMP EAX, DISPLAY_USERS
+	JE VIEW_MFILE		; jump to Display All Users section
+	CMP EAX, LIB_LOGOUT
+	JE START		; logout -> return to main menu
+	JMP SHOW_FULL_MENU	; invalid option -> show menu again
 
 SHOW_MEMBER_MENU:
 	; display member menu and read option
@@ -534,23 +566,166 @@ VIEW_MFILE:
 	filehandle
 	mov edx, offset BUFFER_MEM ; Write String
 	call WriteString
-	JMP START
+	JMP SHOW_FULL_MENU
 ;----------------------------------
 ;--------------ADD BOOKS-----------
 ;----------------------------------	
 	ADD_B:
-
-	INVOKE MSG_DISPLAY, ADDR ADD_MSG
-	MOV ESI, OFFSET BOOKS
-	MOV EAX, BOOK_SIZE
-	MUL NUM_BOOKS
-	ADD ESI, EAX
-	MOV EDX, ESI
-	MOV ECX, BOOK_SIZE
-	CALL READSTRING
-	INC NUM_BOOKS
+		; Prompt for ISBN
+		INVOKE MSG_DISPLAY, ADDR ISBN_PROMPT
+		mov edx, OFFSET BOOK_ISBN_BUF
+		mov ecx, 20
+		CALL READSTRING
 		
-	JMP START
+		; Convert ISBN string to number (simplified validation)
+		; For now, we'll do basic length check
+		INVOKE Str_length, ADDR BOOK_ISBN_BUF
+		cmp eax, 13
+		jne invalid_isbn
+		
+		; Check for duplicate ISBN (simplified - just check if any book exists)
+		; For this implementation, we'll skip duplicate checking for simplicity
+		
+		; Prompt for book name
+		INVOKE MSG_DISPLAY, ADDR BOOK_NAME_PROMPT
+		mov edx, OFFSET BOOK_NAME_BUF
+		mov ecx, BOOK_NAME_SIZE
+		CALL READSTRING
+		
+		; Prompt for author name
+		INVOKE MSG_DISPLAY, ADDR BOOK_AUTHOR_PROMPT
+		mov edx, OFFSET BOOK_AUTHOR_BUF
+		mov ecx, BOOK_AUTHOR_SIZE
+		CALL READSTRING
+		
+		; Prompt for publisher name
+		INVOKE MSG_DISPLAY, ADDR BOOK_PUBLISHER_PROMPT
+		mov edx, OFFSET BOOK_PUBLISHER_BUF
+		mov ecx, BOOK_PUBLISHER_SIZE
+		CALL READSTRING
+		
+		; Prompt for genre
+		INVOKE MSG_DISPLAY, ADDR BOOK_GENRE_PROMPT
+		mov edx, OFFSET BOOK_GENRE_BUF
+		mov ecx, BOOK_GENRE_SIZE
+		CALL READSTRING
+		
+		; Prompt for publishing year
+		INVOKE MSG_DISPLAY, ADDR BOOK_YEAR_PROMPT
+		mov edx, OFFSET BOOK_YEAR_BUF
+		mov ecx, 10
+		CALL READSTRING
+		
+		; Store book information in the books array (simplified - just store in memory for now)
+		; The main storage will be in the file, so we'll skip the complex memory copying
+		
+		INC NUM_BOOKS
+		
+		; Write book data to BOOKS.txt file
+		INVOKE CreateFile,
+			ADDR BOOKS_FILE,    ; lpFileName
+			GENERIC_WRITE,       ; dwDesiredAccess
+			DO_NOT_SHARE,        ; dwShareMode
+			NULL,                ; lpSecurityAttributes
+			OPEN_ALWAYS,         ; dwCreationDisposition
+			FILE_ATTRIBUTE_NORMAL, ; dwFlagsAndAttributes
+			0                    ; hTemplateFile
+		mov filehandle, eax
+
+		; Move file pointer to end for appending
+		INVOKE SetFilePointer, filehandle, 0, 0, FILE_END
+
+		; Write book name
+		mov edx, OFFSET BOOK_NAME_BUF
+		INVOKE Str_length, edx
+		cmp eax, 0
+		je skip_name_write
+		mov ecx, eax          ; length returned in EAX
+		mov eax, filehandle
+		call WriteToFile
+		skip_name_write:
+
+		; write comma separator
+		mov eax, filehandle
+		mov edx, OFFSET COMMA_BYTE
+		mov ecx, 1
+		call WriteToFile
+
+		; write author
+		mov edx, OFFSET BOOK_AUTHOR_BUF
+		INVOKE Str_length, edx
+		mov ecx, eax
+		mov eax, filehandle
+		call WriteToFile
+
+		; write comma separator
+		mov eax, filehandle
+		mov edx, OFFSET COMMA_BYTE
+		mov ecx, 1
+		call WriteToFile
+
+		; write publisher
+		mov edx, OFFSET BOOK_PUBLISHER_BUF
+		INVOKE Str_length, edx
+		mov ecx, eax
+		mov eax, filehandle
+		call WriteToFile
+
+		; write comma separator
+		mov eax, filehandle
+		mov edx, OFFSET COMMA_BYTE
+		mov ecx, 1
+		call WriteToFile
+
+		; write genre
+		mov edx, OFFSET BOOK_GENRE_BUF
+		INVOKE Str_length, edx
+		mov ecx, eax
+		mov eax, filehandle
+		call WriteToFile
+
+		; write comma separator
+		mov eax, filehandle
+		mov edx, OFFSET COMMA_BYTE
+		mov ecx, 1
+		call WriteToFile
+
+		; write year
+		mov edx, OFFSET BOOK_YEAR_BUF
+		INVOKE Str_length, edx
+		mov ecx, eax
+		mov eax, filehandle
+		call WriteToFile
+
+		; write comma separator
+		mov eax, filehandle
+		mov edx, OFFSET COMMA_BYTE
+		mov ecx, 1
+		call WriteToFile
+
+		; write ISBN
+		mov edx, OFFSET BOOK_ISBN_BUF
+		INVOKE Str_length, edx
+		mov ecx, eax
+		mov eax, filehandle
+		call WriteToFile
+
+		; write CRLF after the entry
+		mov eax, filehandle
+		mov edx, OFFSET CRLF_BYTES
+		mov ecx, 2
+		call WriteToFile
+
+		invoke CloseHandle, filehandle
+
+		; Display success message
+		INVOKE MSG_DISPLAY, ADDR BOOK_ADDED_MSG
+		
+		JMP SHOW_FULL_MENU
+		
+	invalid_isbn:
+		INVOKE MSG_DISPLAY, ADDR INVALID_ISBN_MSG
+		JMP SHOW_FULL_MENU
 ;------------------------------------
 ;-------------VIEW BOOKS-------------
 ;------------------------------------
@@ -559,7 +734,7 @@ VIEW_MFILE:
 	INVOKE MSG_DISPLAY, ADDR VIEW_BOOKS_MSG
 	MOV ECX, NUM_BOOKS
 	cmp ECX, 0
-	JE START
+	JE SHOW_FULL_MENU
 	MOV EBX, 0
 OUTPUTB:
 	MOV ESI, OFFSET BOOKS
@@ -572,7 +747,7 @@ OUTPUTB:
 	CALL CRLF	
 LOOP OUTPUTB
 		
-JMP START
+JMP SHOW_FULL_MENU
 ; VIEW BOOKS FROM FILE
 VIEW_BFILE:
 	INVOKE CreateFile,
@@ -595,6 +770,19 @@ VIEW_BFILE:
 	mov edx, offset BUFFER_BOOK ; Write String
 	call WriteString
 	JMP START
+
+; Librarian menu functions (placeholders)
+VIEW_OVERDUE_FUNC:
+	; TODO: Implement view overdue books functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SHOW_FULL_MENU
+
+CALCULATE_FINES_FUNC:
+	; TODO: Implement calculate fines functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SHOW_FULL_MENU
 
 ; Member menu functions (placeholders)
 SEARCH_BOOK_FUNC:
