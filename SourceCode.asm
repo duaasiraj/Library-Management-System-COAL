@@ -138,158 +138,218 @@ MEMBER_MENU:
 	JE REG_M    ; Register -> call registration routine directly
 	JMP START
 
+; -------------------------
+; MEMBER_SIGNIN (fixed)
+; -------------------------
 MEMBER_SIGNIN:
-	; Prompt for username
-	INVOKE MSG_DISPLAY, ADDR SIGNIN_USER_MSG
-	mov edx, OFFSET USERNAME_BUF
-	mov ecx, 20
-	CALL READSTRING
-	; Prompt for password
-	INVOKE MSG_DISPLAY, ADDR SIGNIN_PASS_MSG
-	mov edx, OFFSET PASSWORD_BUF
-	mov ecx, 10
-	CALL READSTRING
+    ; Prompt for username
+    INVOKE MSG_DISPLAY, ADDR SIGNIN_USER_MSG
+    mov edx, OFFSET USERNAME_BUF
+    mov ecx, 20
+    CALL READSTRING
 
-	; Read MEMBERS.txt into buffer
-	INVOKE CreateFile, ADDR MEMBERS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
-	mov filehandle, eax
-	invoke ReadFile, filehandle, ADDR BUFFER_MEM, BUFFER_SIZE, ADDR bytesRead, 0
-	invoke CloseHandle, filehandle
+    ; Prompt for password
+    INVOKE MSG_DISPLAY, ADDR SIGNIN_PASS_MSG
+    mov edx, OFFSET PASSWORD_BUF
+    mov ecx, 10
+    CALL READSTRING
 
-	; if file empty -> invalid
-	mov eax, DWORD PTR bytesRead
-	cmp eax, 0
-	je invalid
+    ; Open MEMBERS.txt for reading
+    INVOKE CreateFile, ADDR MEMBERS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
+    mov filehandle, eax
+    ; check handle
+    cmp eax, INVALID_HANDLE_VALUE
+    je signin_file_error
 
-	; Prepare line buffers (defined in DATA section)
+    ; Read file into buffer
+    invoke ReadFile, filehandle, ADDR BUFFER_MEM, BUFFER_SIZE, ADDR bytesRead, 0
+    ; store bytesRead in a temp if you want; using bytesRead directly is fine
+    invoke CloseHandle, filehandle
 
-	; Search through BUFFER_MEM line by line
-	mov ebx, 0              ; offset index into BUFFER_MEM
-	mov esi, OFFSET BUFFER_MEM
-search_loop:
-	mov eax, DWORD PTR bytesRead
-	cmp ebx, eax
-	jge notfound
-	lea edi, [esi+ebx]      ; edi = &BUFFER_MEM[ebx] -> line start
+    ; if file empty -> invalid
+    mov eax, DWORD PTR bytesRead
+    cmp eax, 0
+    je invalid
 
-	; find end of line (CR, LF or NULL)
-	mov edx, 0              ; lineLen
-find_eol:
-	mov al, byte ptr [edi+edx]
-	cmp al, 0
-	je process_line
-	cmp al, 0Dh
-	je process_line
-	cmp al, 0Ah
-	je process_line
-	inc edx
-	jmp find_eol
+    ; -------- parse buffer safely line by line --------
+    ; ESI = base of BUFFER_MEM
+    mov esi, OFFSET BUFFER_MEM
+    xor ebx, ebx            ; ebx = offset into BUFFER_MEM (bytes consumed)
 
-process_line:
-	; edx = line length
-	cmp edx, 0
-	je advance_offset
+search_loop_fixed:
+    mov eax, DWORD PTR bytesRead
+    cmp ebx, eax
+    jge notfound_fixed      ; reached end without match
 
-	; find comma index within line
-	mov ecx, 0              ; commaIndex
-find_comma:
-	cmp ecx, edx
-	jge advance_offset
-	cmp byte ptr [edi+ecx], ','
-	je got_comma
-	inc ecx
-	jmp find_comma
+    ; edi = pointer to current line (BUFFER_MEM + ebx)
+    lea edi, [esi + ebx]
 
-advance_offset:
-	; move ebx to after this line (skip CR/LF)
-	add ebx, edx
-	; skip CR
-	cmp byte ptr [esi+ebx], 0Dh
-	jne after_cr
-	inc ebx
-	cmp byte ptr [esi+ebx], 0Ah
-	jne after_cr
-	inc ebx
-after_cr:
-	jmp search_loop
-
-got_comma:
-	; copy username part into LINE_USER_BUF
-	mov edi, OFFSET LINE_USER_BUF
-	mov ecx, 0
-copy_user:
-    cmp ecx, edx
-    jge term_user
-
-    ; calculate address (BUFFER_MEM + ebx + ecx)
-    mov edx, esi
-    add edx, ebx
-    add edx, ecx
-
-    mov al, byte ptr [edx]
-    mov byte ptr [OFFSET LINE_USER_BUF + ecx], al
-
+    ; find line length in ecx (stop at NULL, CR or LF)
+    xor ecx, ecx
+find_eol_fixed:
+    mov al, [edi + ecx]
+    cmp al, 0
+    je process_line_fixed
+    cmp al, 0Dh
+    je process_line_fixed
+    cmp al, 0Ah
+    je process_line_fixed
     inc ecx
-    jmp copy_user
+    jmp find_eol_fixed
 
-term_user:
-	; null-terminate user buffer (commaIndex is in ECX when found)
-	mov byte ptr [OFFSET LINE_USER_BUF + ecx], 0
+process_line_fixed:
+    cmp ecx, 0
+    je advance_offset_fixed   ; empty line, skip
 
-	; compute password length = edx - (ecx+1)
-	mov eax, edx
-	sub eax, ecx
-	dec eax                 ; password length
-	; copy password into LINE_PASS_BUF
-	mov edi, OFFSET LINE_PASS_BUF
-	mov esi, OFFSET BUFFER_MEM
-	mov ebp, ecx            ; commaIndex
-	mov ecx, 0
-copy_pass:
-    cmp ecx, eax
-    jge term_pass
+    ; find comma position in edx (0..ecx-1)
+    xor edx, edx
+find_comma_fixed:
+    cmp edx, ecx
+    jge advance_offset_fixed
+    cmp byte ptr [edi + edx], ','
+    je got_comma_fixed
+    inc edx
+    jmp find_comma_fixed
 
-    ; compute starting address (BUFFER_MEM + commaIndex + 1)
-    mov edx, esi
-    add edx, ebp
-    add edx, 1
+got_comma_fixed:
+    ; copy username (length = edx) from [edi] to LINE_USER_BUF
+    mov esi, edi              ; source pointer
+    mov edi, OFFSET LINE_USER_BUF ; dest pointer
+    mov ecx, edx              ; number of bytes to copy
+    xor eax, eax
+copy_user_fixed:
+    cmp ecx, 0
+    je term_user_fixed
+    mov al, [esi]
+    mov [edi], al
+    inc esi
+    inc edi
+    dec ecx
+    jmp copy_user_fixed
+term_user_fixed:
+    mov byte ptr [edi], 0     ; null-terminate LINE_USER_BUF
 
-    mov al, byte ptr [edx+ecx]
-    mov byte ptr [edi+ecx], al
+    ; copy password (length = ecx_line - commaIndex - 1)
+    ; compute password length in ecx: (lineLen - edx - 1)
+    mov eax, ecx              ; careful: ecx currently 0 (we used it); recalc
+    ; We still have original line length in stack? No — recalc using saved values:
+    ; line length was in original register when we found EOL: we used ECX then changed.
+    ; To avoid this confusion, re-calc line len: find EOL again (cheap) from edi-of-line
+    ; Simpler: compute password length = ( (pointer to EOL) - (pointer to edi) ) - (comma+1)
+    ; We have pointer to line in edi_orig (we used edi). Recreate:
+    ; edi currently points to LINE_USER_BUF + username_len + 1 (after term_user_fixed)
+    ; so use a different approach: compute pwLen = (offset to EOL) - (commaIndex +1)
+    ; We'll recompute line length into ecx by scanning again from line start.
 
+    ; Recompute line length:
+    lea esi, [OFFSET BUFFER_MEM + ebx]
+    xor ecx, ecx
+find_eol_fixed2:
+    mov al, [esi + ecx]
+    cmp al, 0
+    je got_len2
+    cmp al, 0Dh
+    je got_len2
+    cmp al, 0Ah
+    je got_len2
     inc ecx
-    jmp copy_pass
+    jmp find_eol_fixed2
+got_len2:
+    ; ecx = lineLen, edx = commaIndex (still)
+    mov eax, ecx
+    sub eax, edx
+    dec eax    ; password length = lineLen - commaIndex - 1
+    cmp eax, 0
+    jle term_pass_fixed2   ; nothing after comma
 
-term_pass:
-	mov byte ptr [edi+ecx], 0
+    ; prepare source pointer = lineStart + commaIndex + 1
+    lea esi, [OFFSET BUFFER_MEM + ebx]
+    add esi, edx
+    inc esi                  ; now esi points to first char of password
+    mov edi, OFFSET LINE_PASS_BUF
+    mov ecx, eax             ; password length
+copy_pass_fixed:
+    cmp ecx, 0
+    je term_pass_fixed2
+    mov al, [esi]
+    mov [edi], al
+    inc esi
+    inc edi
+    dec ecx
+    jmp copy_pass_fixed
+term_pass_fixed2:
+    mov byte ptr [edi], 0
 
-	; Compare input username with LINE_USER_BUF
-	INVOKE Str_compare, ADDR USERNAME_BUF, ADDR LINE_USER_BUF
-	jne restore_and_continue
-	; Compare input password with LINE_PASS_BUF
-	INVOKE Str_compare, ADDR PASSWORD_BUF, ADDR LINE_PASS_BUF
-	jne restore_and_continue
-	; Found match
-	JMP SHOW_FULL_MENU
+    ; Compare input username with LINE_USER_BUF
+    INVOKE Str_compare, ADDR USERNAME_BUF, ADDR LINE_USER_BUF
+    jne restore_and_continue_fixed
+    ; Compare input password with LINE_PASS_BUF
+    INVOKE Str_compare, ADDR PASSWORD_BUF, ADDR LINE_PASS_BUF
+    jne restore_and_continue_fixed
 
-restore_and_continue:
-	; advance offset past this line
-	add ebx, edx
-	; skip CRLF
-	cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Dh
-	jne cont_loop
-	inc ebx
-	cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
-	jne cont_loop
-	inc ebx
-cont_loop:
-	jmp search_loop
+    ; Found match -> show full menu
+    JMP SHOW_FULL_MENU
 
-notfound:
-	; no matching entry
+restore_and_continue_fixed:
+    ; Advance ebx to after this line (skip CR/LF and the line itself)
+    ; ebx += lineLen
+    ; compute lineLen again:
+    lea eax, [OFFSET BUFFER_MEM]
+    add eax, ebx            ; eax = pointer to line start
+    ; but easier: we already computed lineLen in ecx (got_len2)
+    mov eax, ecx
+    add ebx, eax
+
+    ; skip CR then LF if present
+    cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Dh
+    jne cont_loop_fixed
+    inc ebx
+    cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
+    jne cont_loop_fixed
+    inc ebx
+cont_loop_fixed:
+    jmp search_loop_fixed
+
+advance_offset_fixed:
+    ; when no comma or empty line -> skip this line
+    ; recompute line length in ecx
+    lea esi, [OFFSET BUFFER_MEM + ebx]
+    xor ecx, ecx
+find_eol_skip:
+    mov al, [esi + ecx]
+    cmp al, 0
+    je got_len_skip
+    cmp al, 0Dh
+    je got_len_skip
+    cmp al, 0Ah
+    je got_len_skip
+    inc ecx
+    jmp find_eol_skip
+got_len_skip:
+    add ebx, ecx
+    ; skip CRLF
+    cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Dh
+    jne after_cr_fixed
+    inc ebx
+    cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
+    jne after_cr_fixed
+    inc ebx
+after_cr_fixed:
+    jmp search_loop_fixed
+
+notfound_fixed:
+    ; no matching entry
+    jmp invalid
+
+signin_file_error:
+    ; could not open file; treat as invalid login
+    INVOKE MSG_DISPLAY, ADDR INVALID_CRED_MSG
+    JMP START
+
 invalid:
-	INVOKE MSG_DISPLAY, ADDR INVALID_CRED_MSG
-	JMP START
+    INVOKE MSG_DISPLAY, ADDR INVALID_CRED_MSG
+    JMP START
+
 
 LIB_LOGIN:
 		; Prompt for librarian code and validate
