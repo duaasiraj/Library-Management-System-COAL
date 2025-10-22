@@ -33,6 +33,15 @@ MEMBER_OPTIONS_MSG BYTE 0Ah
 	BYTE    "4. View Sorted Books",0dh,0ah
 	BYTE    "5. Logout",0dh,0ah
 	BYTE    "Select an option: ",0
+
+SEARCH_MENU_MSG BYTE 0Ah
+	BYTE    "Search Menu:",0dh,0ah
+	BYTE    "1. By Name",0dh,0ah
+	BYTE    "2. By Author",0dh,0ah
+	BYTE    "3. By Publisher",0dh,0ah
+	BYTE    "4. By Year",0dh,0ah
+	BYTE    "5. Back",0dh,0ah
+	BYTE    "Select an option: ",0
 SIGNIN_USER_MSG BYTE "Enter username: ",0
 SIGNIN_PASS_MSG BYTE "Enter password: ",0
 INVALID_CRED_MSG BYTE 0Ah, "Invalid email or password.",0dh,0ah,0
@@ -80,7 +89,14 @@ SEARCH_BOOK	 DWORD 1
 ISSUE_BOOK	 DWORD 2
 RETURN_BOOK	 DWORD 3
 VIEW_SORTED	 DWORD 4
-MEMBER_LOGOUT DWORD 5	
+MEMBER_LOGOUT DWORD 5
+
+; Search menu options
+SEARCH_BY_NAME	 DWORD 1
+SEARCH_BY_AUTHOR DWORD 2
+SEARCH_BY_PUBLISHER DWORD 3
+SEARCH_BY_YEAR	 DWORD 4
+SEARCH_BACK	 DWORD 5	
 MEMBER_SIZE = 20
 MEMBER1 DB MEMBER_SIZE DUP (?)
 MEMBER2 DB MEMBER_SIZE DUP (?)
@@ -784,12 +800,23 @@ CALCULATE_FINES_FUNC:
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
 	JMP SHOW_FULL_MENU
 
-; Member menu functions (placeholders)
+; Member menu functions
 SEARCH_BOOK_FUNC:
-	; TODO: Implement search book functionality
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	JMP SHOW_MEMBER_MENU
+	; Display search menu and read option
+	INVOKE MSG_DISPLAY, ADDR SEARCH_MENU_MSG
+	CALL READINT ; input for options
+
+	CMP EAX, SEARCH_BY_NAME
+	JE SEARCH_BY_NAME_FUNC	; jump to Search By Name section
+	CMP EAX, SEARCH_BY_AUTHOR
+	JE SEARCH_BY_AUTHOR_FUNC	; jump to Search By Author section
+	CMP EAX, SEARCH_BY_PUBLISHER
+	JE SEARCH_BY_PUBLISHER_FUNC	; jump to Search By Publisher section
+	CMP EAX, SEARCH_BY_YEAR
+	JE SEARCH_BY_YEAR_FUNC	; jump to Search By Year section
+	CMP EAX, SEARCH_BACK
+	JE SHOW_MEMBER_MENU	; back -> return to member menu
+	JMP SEARCH_BOOK_FUNC	; invalid option -> show search menu again
 
 ISSUE_BOOK_FUNC:
 	; TODO: Implement issue book functionality
@@ -808,6 +835,31 @@ VIEW_SORTED_FUNC:
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
 	JMP SHOW_MEMBER_MENU
+
+; Search menu functions (placeholders)
+SEARCH_BY_NAME_FUNC:
+	; TODO: Implement search by name functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SEARCH_BOOK_FUNC
+
+SEARCH_BY_AUTHOR_FUNC:
+	; TODO: Implement search by author functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SEARCH_BOOK_FUNC
+
+SEARCH_BY_PUBLISHER_FUNC:
+	; TODO: Implement search by publisher functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SEARCH_BOOK_FUNC
+
+SEARCH_BY_YEAR_FUNC:
+	; TODO: Implement search by year functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SEARCH_BOOK_FUNC
 
 	EXIT_MENU:
 		INVOKE MSG_DISPLAY, ADDR EXIT_MSG
