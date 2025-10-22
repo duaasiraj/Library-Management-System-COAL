@@ -24,6 +24,15 @@ msg1	 BYTE 0AH
 	INVALID_CODE_MSG BYTE 0AH, "Invalid code. Returning to top menu.",0dh,0ah,0
 
 MEMBER_MENU_MSG BYTE 0Ah, "1-> Sign In",0dh,0ah, "2-> Register",0dh,0ah, "Choose Your Option : ",0
+
+MEMBER_OPTIONS_MSG BYTE 0Ah
+	BYTE    "Member Menu:",0dh,0ah
+	BYTE    "1. Search a Book",0dh,0ah
+	BYTE    "2. Issue Book",0dh,0ah
+	BYTE    "3. Return Book",0dh,0ah
+	BYTE    "4. View Sorted Books",0dh,0ah
+	BYTE    "5. Logout",0dh,0ah
+	BYTE    "Select an option: ",0
 SIGNIN_USER_MSG BYTE "Enter username: ",0
 SIGNIN_PASS_MSG BYTE "Enter password: ",0
 INVALID_CRED_MSG BYTE 0Ah, "Invalid email or password.",0dh,0ah,0
@@ -64,7 +73,14 @@ VIEW_MF		 DWORD 3
 ADD_BOOK	 DWORD 4
 VIEW_BOOKS	 DWORD 5
 VIEW_BF		 DWORD 6
-EXITP		 DWORD 7	
+EXITP		 DWORD 7
+
+; Member menu options
+SEARCH_BOOK	 DWORD 1
+ISSUE_BOOK	 DWORD 2
+RETURN_BOOK	 DWORD 3
+VIEW_SORTED	 DWORD 4
+MEMBER_LOGOUT DWORD 5	
 MEMBER_SIZE = 20
 MEMBER1 DB MEMBER_SIZE DUP (?)
 MEMBER2 DB MEMBER_SIZE DUP (?)
@@ -127,6 +143,23 @@ SHOW_FULL_MENU:
 	CMP EAX, VIEW_BF
 	JE VIEW_BFILE		; taking input in 2D array
 		JMP EXIT_MENU
+
+SHOW_MEMBER_MENU:
+	; display member menu and read option
+	INVOKE MSG_DISPLAY, ADDR MEMBER_OPTIONS_MSG
+	CALL READINT ; input for options
+
+	CMP EAX, SEARCH_BOOK
+	JE SEARCH_BOOK_FUNC	; jump to Search Book section
+	CMP EAX, ISSUE_BOOK
+	JE ISSUE_BOOK_FUNC	; jump to Issue Book section
+	CMP EAX, RETURN_BOOK
+	JE RETURN_BOOK_FUNC	; jump to Return Book section
+	CMP EAX, VIEW_SORTED
+	JE VIEW_SORTED_FUNC	; jump to View Sorted Books section
+	CMP EAX, MEMBER_LOGOUT
+	JE START		; logout -> return to main menu
+	JMP SHOW_MEMBER_MENU	; invalid option -> show menu again
 
 MEMBER_MENU:
 	; Show member options: Sign In or Register
@@ -287,8 +320,8 @@ term_pass_fixed2:
     INVOKE Str_compare, ADDR PASSWORD_BUF, ADDR LINE_PASS_BUF
     jne restore_and_continue_fixed
 
-    ; Found match -> show full menu
-    JMP SHOW_FULL_MENU
+    ; Found match -> show member menu
+    JMP SHOW_MEMBER_MENU
 
 restore_and_continue_fixed:
     ; Advance ebx to after this line (skip CR/LF and the line itself)
@@ -562,6 +595,31 @@ VIEW_BFILE:
 	mov edx, offset BUFFER_BOOK ; Write String
 	call WriteString
 	JMP START
+
+; Member menu functions (placeholders)
+SEARCH_BOOK_FUNC:
+	; TODO: Implement search book functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SHOW_MEMBER_MENU
+
+ISSUE_BOOK_FUNC:
+	; TODO: Implement issue book functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SHOW_MEMBER_MENU
+
+RETURN_BOOK_FUNC:
+	; TODO: Implement return book functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SHOW_MEMBER_MENU
+
+VIEW_SORTED_FUNC:
+	; TODO: Implement view sorted books functionality
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	JMP SHOW_MEMBER_MENU
 
 	EXIT_MENU:
 		INVOKE MSG_DISPLAY, ADDR EXIT_MSG
