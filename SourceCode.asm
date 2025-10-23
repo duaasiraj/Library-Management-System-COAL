@@ -42,6 +42,32 @@ SEARCH_MENU_MSG BYTE 0Ah
 	BYTE    "4. By Year",0dh,0ah
 	BYTE    "5. Back",0dh,0ah
 	BYTE    "Select an option: ",0
+ 
+SORT_MENU_MSG BYTE 0Ah
+	BYTE    "Sort Menu:",0dh,0ah
+	BYTE    "1. Name (Ascending)",0dh,0ah
+	BYTE    "2. Name (Descending)",0dh,0ah
+	BYTE    "3. Author (Ascending)",0dh,0ah
+	BYTE    "4. Author (Descending)",0dh,0ah
+	BYTE    "5. Publisher (Ascending)",0dh,0ah
+	BYTE    "6. Publisher (Descending)",0dh,0ah
+	BYTE    "7. Year (Ascending)",0dh,0ah
+	BYTE    "8. Year (Descending)",0dh,0ah
+	BYTE    "9. ISBN (Ascending)",0dh,0ah
+	BYTE    "10. ISBN (Descending)",0dh,0ah
+	BYTE    "11. Back",0dh,0ah
+	BYTE    "Select an option: ",0
+
+SORT_NAME_ASC_MSG BYTE 0Ah, "Sorting: Name (Ascending) - not implemented.",0Dh,0Ah,0
+SORT_NAME_DESC_MSG BYTE 0Ah, "Sorting: Name (Descending) - not implemented.",0Dh,0Ah,0
+SORT_AUTHOR_ASC_MSG BYTE 0Ah, "Sorting: Author (Ascending) - not implemented.",0Dh,0Ah,0
+SORT_AUTHOR_DESC_MSG BYTE 0Ah, "Sorting: Author (Descending) - not implemented.",0Dh,0Ah,0
+SORT_PUB_ASC_MSG BYTE 0Ah, "Sorting: Publisher (Ascending) - not implemented.",0Dh,0Ah,0
+SORT_PUB_DESC_MSG BYTE 0Ah, "Sorting: Publisher (Descending) - not implemented.",0Dh,0Ah,0
+SORT_YEAR_ASC_MSG BYTE 0Ah, "Sorting: Year (Ascending) - not implemented.",0Dh,0Ah,0
+SORT_YEAR_DESC_MSG BYTE 0Ah, "Sorting: Year (Descending) - not implemented.",0Dh,0Ah,0
+SORT_ISBN_ASC_MSG BYTE 0Ah, "Sorting: ISBN (Ascending) - not implemented.",0Dh,0Ah,0
+SORT_ISBN_DESC_MSG BYTE 0Ah, "Sorting: ISBN (Descending) - not implemented.",0Dh,0Ah,0
 SIGNIN_USER_MSG BYTE "Enter username: ",0
 SIGNIN_PASS_MSG BYTE "Enter password: ",0
 INVALID_CRED_MSG BYTE 0Ah, "Invalid email or password.",0dh,0ah,0
@@ -505,38 +531,6 @@ LIB_LOGIN:
 
 	invoke CloseHandle, filehandle
 
-	;INVOKE CreateFile,
-	;ADDR MEMBERS_FILE,
-	;GENERIC_WRITE,
-	;DO_NOT_SHARE, 
-	;NULL, 
-	;OPEN_ALWAYS, 
-	;FILE_ATTRIBUTE_NORMAL, 
-	;0
-;
-;cmp eax, INVALID_HANDLE_VALUE
-	;je exit_1
-	;mov filehandle, eax
-;INVOKE SetFilePointer,
-	 ;filehandle,
-	;0, ; distance low
-	;0, ; distance high
-	;FILE_END
-	;mov eax,filehandle
-;
-	;mov edx, offset BUFFER_MEM
-	;mov ecx, 7
-	;call READSTRING
-	;mov eax, filehandle
-	;call WriteToFile
-;
-	;INVOKE SetFilePointer,
-	 ;filehandle,
-	;0, ; distance low
-	;0, ; distance high
-	;FILE_END
-;exit_1:
-	;invoke CloseHandle, filehandle
 
 		JMP START
 
@@ -831,10 +825,76 @@ RETURN_BOOK_FUNC:
 	JMP SHOW_MEMBER_MENU
 
 VIEW_SORTED_FUNC:
-	; TODO: Implement view sorted books functionality
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	JMP SHOW_MEMBER_MENU
+	; Display sort menu and handle selection
+	INVOKE MSG_DISPLAY, ADDR SORT_MENU_MSG
+	CALL READINT
+
+	CMP EAX, 1
+	JE SORT_NAME_ASC
+	CMP EAX, 2
+	JE SORT_NAME_DESC
+	CMP EAX, 3
+	JE SORT_AUTHOR_ASC
+	CMP EAX, 4
+	JE SORT_AUTHOR_DESC
+	CMP EAX, 5
+	JE SORT_PUB_ASC
+	CMP EAX, 6
+	JE SORT_PUB_DESC
+	CMP EAX, 7
+	JE SORT_YEAR_ASC
+	CMP EAX, 8
+	JE SORT_YEAR_DESC
+	CMP EAX, 9
+	JE SORT_ISBN_ASC
+	CMP EAX, 10
+	JE SORT_ISBN_DESC
+	CMP EAX, 11
+	JE SHOW_MEMBER_MENU
+
+	; invalid option -> show sort menu again
+	JMP VIEW_SORTED_FUNC
+
+; Sort option handlers (stubs)
+SORT_NAME_ASC:
+    INVOKE MSG_DISPLAY, ADDR SORT_NAME_ASC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_NAME_DESC:
+    INVOKE MSG_DISPLAY, ADDR SORT_NAME_DESC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_AUTHOR_ASC:
+    INVOKE MSG_DISPLAY, ADDR SORT_AUTHOR_ASC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_AUTHOR_DESC:
+    INVOKE MSG_DISPLAY, ADDR SORT_AUTHOR_DESC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_PUB_ASC:
+    INVOKE MSG_DISPLAY, ADDR SORT_PUB_ASC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_PUB_DESC:
+    INVOKE MSG_DISPLAY, ADDR SORT_PUB_DESC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_YEAR_ASC:
+    INVOKE MSG_DISPLAY, ADDR SORT_YEAR_ASC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_YEAR_DESC:
+    INVOKE MSG_DISPLAY, ADDR SORT_YEAR_DESC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_ISBN_ASC:
+    INVOKE MSG_DISPLAY, ADDR SORT_ISBN_ASC_MSG
+    JMP VIEW_SORTED_FUNC
+
+SORT_ISBN_DESC:
+    INVOKE MSG_DISPLAY, ADDR SORT_ISBN_DESC_MSG
+    JMP VIEW_SORTED_FUNC
 
 ; Search menu functions (placeholders)
 SEARCH_BY_NAME_FUNC:
@@ -881,5 +941,4 @@ STRING_INPUT PROC USES EDX ECX, var: ptr dword
 	CALL READSTRING
 	RET
 	STRING_INPUT ENDP
-
 end main
