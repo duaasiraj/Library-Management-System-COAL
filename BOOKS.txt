@@ -1,1 +1,25 @@
-xyz,xyz,xxz,yxz,2025,1234567891234
+Shadows of Eternity,Clara Rivers,Silverline Press,Fantasy,2025,9781234567890
+The Quantum Paradox,Daniel Cole,Horizon House,Science Fiction,2025,9781234567891
+Echoes of Time,Lena Foster,Maplewood Books,Historical Fiction,2025,9781234567892
+Mind Over Matter,Julian Hart,Insight Publications,Self-Help,2025,9781234567893
+Whispers in the Wind,Emily Kane,Bluebird Press,Romance,2025,9781234567894
+The Final Algorithm,Noah Steele,TechMind Media,Thriller,2025,9781234567895
+Beyond the Horizon,Sophie Lang,Sunrise Publishers,Adventure,2025,9781234567896
+Fragments of Tomorrow,Oliver Blake,Crystal House,Drama,2025,9781234567897
+Beneath the Waves,Ava Brooks,Oceanic Press,Mystery,2025,9781234567898
+Dreams of Steel,Ethan Clark,IronPen Publications,Action,2025,9781234567899
+The Silent Symphony,Grace Moore,Harmony Books,Music,2025,9781234567900
+Voices of the Forgotten,Liam Hayes,Evergreen Press,Biography,2025,9781234567901
+Digital Souls,Nora Quinn,Neural Press,Science Fiction,2025,9781234567902
+Rising Shadows,Isaac Bell,Midnight Ink,Horror,2025,9781234567903
+Infinite Realms,Maya Torres,Galaxy House,Fantasy,2025,9781234567904
+Tides of Memory,Elena Cross,Blueleaf Publications,Romance,2025,9781234567905
+The Art of Deception,Ryan Hale,Redstone Books,Thriller,2025,9781234567906
+Code of Silence,Harper Reed,CyberEdge Media,Techno-Thriller,2025,9781234567907
+Paths Unknown,Chloe Adams,Journey Press,Adventure,2025,9781234567908
+Fallen Kingdoms,Leo Carter,Empyrean Books,Fantasy,2025,9781234567909
+The Forgotten Equation,Sophia Watts,Logic Tree,Science,2025,9781234567910
+Love in the Mist,Amy Fields,Wildrose House,Romance,2025,9781234567911
+The Eternal Flame,Nathan Scott,Blaze Publications,Fantasy,2025,9781234567912
+City of Glass,Morgan Ellis,Urban Books,Dystopian,2025,9781234567913
+Parallel Hearts,Lucas Gray,Newlight Press,Romance,2025,9781234567914
