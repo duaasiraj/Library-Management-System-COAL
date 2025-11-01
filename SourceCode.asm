@@ -22,8 +22,11 @@ msg1	 BYTE 0AH
 	BYTE    "Choose Your Option : ", 0
 	LIB_LOGIN_MSG BYTE 0AH, "Enter librarian code: ",0
 	INVALID_CODE_MSG BYTE 0AH, "Invalid code. Returning to top menu.",0dh,0ah,0
+	LIB_SUCCESS_MSG BYTE 0AH, "Login successful! Welcome, Librarian.",0dh,0ah,0
 
 MEMBER_MENU_MSG BYTE 0Ah, "1-> Sign In",0dh,0ah, "2-> Register",0dh,0ah, "Choose Your Option : ",0
+MEMBER_SUCCESS_MSG BYTE 0AH, "Login successful! Welcome, ",0
+MEMBER_SUCCESS_MSG2 BYTE ".",0dh,0ah,0
 
 MEMBER_OPTIONS_MSG BYTE 0Ah
 	BYTE    "Member Menu:",0dh,0ah
@@ -72,6 +75,8 @@ SIGNIN_USER_MSG BYTE "Enter username: ",0
 SIGNIN_PASS_MSG BYTE "Enter password: ",0
 INVALID_CRED_MSG BYTE 0Ah, "Invalid email or password.",0dh,0ah,0
 
+NO_BOOKS_MSG BYTE 0Ah, "No books found.",0Dh,0Ah,0
+
 VALID_USER BYTE "faizan",0
 VALID_PASS BYTE "1234",0
 USERNAME_BUF BYTE 20 DUP(?)
@@ -91,6 +96,12 @@ EXIT_MSG	   BYTE 0AH,
 					"	------------------", 0
 					
 	CRLF_BYTES BYTE 0Dh,0Ah
+	NAME_LABEL BYTE "Name: ",0
+	AUTHOR_LABEL BYTE "Author: ",0
+	PUBLISHER_LABEL BYTE "Publisher: ",0
+	GENRE_LABEL BYTE "Genre: ",0
+	YEAR_LABEL BYTE "Year: ",0
+	ISBN_LABEL BYTE "ISBN: ",0
 					
 ; variables to maniulate Books & Members
 
@@ -159,6 +170,10 @@ BOOK_GENRE_BUF DB BOOK_GENRE_SIZE DUP (?)
 BOOK_YEAR_BUF DB 10 DUP (?)
 BOOK_ISBN_BUF DB 20 DUP (?)
 
+; Temp buffers used by search routines
+TEMP_FIELD DB 200 DUP(?)
+TEMP_LINE  DB 512 DUP(?)
+
 ; Book input prompts
 ISBN_PROMPT BYTE "Enter ISBN: ",0
 BOOK_NAME_PROMPT BYTE "Enter book name: ",0
@@ -169,21 +184,6 @@ BOOK_YEAR_PROMPT BYTE "Enter publishing year: ",0
 INVALID_ISBN_MSG BYTE "You must enter a valid 13 digit ISBN number.",0dh,0ah,0
 DUPLICATE_ISBN_MSG BYTE "That book already exists. Please check the ISBN number again.",0dh,0ah,0
 BOOK_ADDED_MSG BYTE "Book added successfully!",0dh,0ah,0
-
-; Search input buffers
-SEARCH_INPUT_BUF BYTE 100 DUP(?)
-SEARCH_RESULTS_MSG BYTE 0Ah, "Search Results:",0dh,0ah,0
-NO_RESULTS_MSG BYTE 0Ah, "No books found matching your search.",0dh,0ah,0
-SEARCH_PROMPT_MSG BYTE "Enter search term: ",0
-
-; Improved search variables
-TEMP_LINE BYTE 500 DUP(?)
-FIELD_BUF BYTE 200 DUP(?)
-FOUND DWORD 0
-SEARCH_NAME_MSG BYTE "Enter book name to search: ",0
-SEARCH_AUTHOR_MSG BYTE "Enter author name to search: ",0
-SEARCH_PUBLISHER_MSG BYTE "Enter publisher name to search: ",0
-SEARCH_YEAR_MSG BYTE "Enter year to search: ",0
 
 ; ISBN validation constants
 ISBN_CHECK QWORD 1000000000000
@@ -226,7 +226,7 @@ SHOW_FULL_MENU:
 	CMP EAX, ADD_BOOK
 	JE ADD_B		; jump to Add Book section
 	CMP EAX, DISPLAY_BOOKS
-	JE VIEW_B		; jump to Display All Books section
+	JE VIEW_BFILE		; jump to Display All Books section (from file)
 	CMP EAX, DISPLAY_USERS
 	JE VIEW_MFILE		; jump to Display All Users section
 	CMP EAX, LIB_LOGOUT
@@ -293,20 +293,18 @@ MEMBER_SIGNIN:
     cmp eax, 0
     je invalid
 
-    ; -------- parse buffer safely line by line --------
-    ; ESI = base of BUFFER_MEM
-    mov esi, OFFSET BUFFER_MEM
-    xor ebx, ebx            ; ebx = offset into BUFFER_MEM (bytes consumed)
+    ; Parse buffer line by line
+    xor ebx, ebx            ; ebx = offset into BUFFER_MEM
 
 search_loop_fixed:
     mov eax, DWORD PTR bytesRead
     cmp ebx, eax
     jge notfound_fixed      ; reached end without match
 
-    ; edi = pointer to current line (BUFFER_MEM + ebx)
-    lea edi, [esi + ebx]
+    ; Calculate line start pointer
+    lea edi, [OFFSET BUFFER_MEM + ebx]
 
-    ; find line length in ecx (stop at NULL, CR or LF)
+    ; Find line length
     xor ecx, ecx
 find_eol_fixed:
     mov al, [edi + ecx]
@@ -320,10 +318,13 @@ find_eol_fixed:
     jmp find_eol_fixed
 
 process_line_fixed:
+    ; Store line length on stack
+    push ecx
+    
     cmp ecx, 0
     je advance_offset_fixed   ; empty line, skip
 
-    ; find comma position in edx (0..ecx-1)
+    ; Find comma position in edx (0..ecx-1)
     xor edx, edx
 find_comma_fixed:
     cmp edx, ecx
@@ -334,11 +335,14 @@ find_comma_fixed:
     jmp find_comma_fixed
 
 got_comma_fixed:
-    ; copy username (length = edx) from [edi] to LINE_USER_BUF
-    mov esi, edi              ; source pointer
-    mov edi, OFFSET LINE_USER_BUF ; dest pointer
-    mov ecx, edx              ; number of bytes to copy
-    xor eax, eax
+    ; Save comma position and line start
+    push edx
+    push edi
+    
+    ; Copy username (length = edx) to LINE_USER_BUF
+    mov esi, edi
+    mov edi, OFFSET LINE_USER_BUF
+    mov ecx, edx
 copy_user_fixed:
     cmp ecx, 0
     je term_user_fixed
@@ -349,47 +353,24 @@ copy_user_fixed:
     dec ecx
     jmp copy_user_fixed
 term_user_fixed:
-    mov byte ptr [edi], 0     ; null-terminate LINE_USER_BUF
+    mov byte ptr [edi], 0
 
-    ; copy password (length = ecx_line - commaIndex - 1)
-    ; compute password length in ecx: (lineLen - edx - 1)
-    mov eax, ecx              ; careful: ecx currently 0 (we used it); recalc
-    ; We still have original line length in stack? No — recalc using saved values:
-    ; line length was in original register when we found EOL: we used ECX then changed.
-    ; To avoid this confusion, re-calc line len: find EOL again (cheap) from edi-of-line
-    ; Simpler: compute password length = ( (pointer to EOL) - (pointer to edi) ) - (comma+1)
-    ; We have pointer to line in edi_orig (we used edi). Recreate:
-    ; edi currently points to LINE_USER_BUF + username_len + 1 (after term_user_fixed)
-    ; so use a different approach: compute pwLen = (offset to EOL) - (commaIndex +1)
-    ; We'll recompute line length into ecx by scanning again from line start.
-
-    ; Recompute line length:
-    lea esi, [OFFSET BUFFER_MEM + ebx]
-    xor ecx, ecx
-find_eol_fixed2:
-    mov al, [esi + ecx]
-    cmp al, 0
-    je got_len2
-    cmp al, 0Dh
-    je got_len2
-    cmp al, 0Ah
-    je got_len2
-    inc ecx
-    jmp find_eol_fixed2
-got_len2:
-    ; ecx = lineLen, edx = commaIndex (still)
-    mov eax, ecx
+    ; Restore registers
+    pop edi  ; line start
+    pop edx  ; comma position
+    
+    ; Calculate password length = lineLen - commaIndex - 1
+    mov eax, [esp]  ; get line length from stack (don't pop yet)
     sub eax, edx
-    dec eax    ; password length = lineLen - commaIndex - 1
+    dec eax
     cmp eax, 0
-    jle term_pass_fixed2   ; nothing after comma
+    jle term_pass_fixed2
 
-    ; prepare source pointer = lineStart + commaIndex + 1
-    lea esi, [OFFSET BUFFER_MEM + ebx]
-    add esi, edx
-    inc esi                  ; now esi points to first char of password
+    ; Copy password to LINE_PASS_BUF
+    push edi
+    lea esi, [edi + edx + 1]  ; start after comma
     mov edi, OFFSET LINE_PASS_BUF
-    mov ecx, eax             ; password length
+    mov ecx, eax  ; password length
 copy_pass_fixed:
     cmp ecx, 0
     je term_pass_fixed2
@@ -401,31 +382,43 @@ copy_pass_fixed:
     jmp copy_pass_fixed
 term_pass_fixed2:
     mov byte ptr [edi], 0
+    pop edi
 
-    ; Compare input username with LINE_USER_BUF
+    ; Compare username
     INVOKE Str_compare, ADDR USERNAME_BUF, ADDR LINE_USER_BUF
     jne restore_and_continue_fixed
-    ; Compare input password with LINE_PASS_BUF
+    
+    ; Compare password
     INVOKE Str_compare, ADDR PASSWORD_BUF, ADDR LINE_PASS_BUF
     jne restore_and_continue_fixed
 
-    ; Found match -> show member menu
+    ; Found match -> clean up stack, show success message with username and member menu
+    pop ecx  ; remove line length from stack
+    
+    ; Display "Login successful! Welcome, "
+    INVOKE MSG_DISPLAY, ADDR MEMBER_SUCCESS_MSG
+    
+    ; Display the username
+    mov edx, OFFSET LINE_USER_BUF
+    call WriteString
+    
+    ; Display "."
+    INVOKE MSG_DISPLAY, ADDR MEMBER_SUCCESS_MSG2
+    
     JMP SHOW_MEMBER_MENU
 
 restore_and_continue_fixed:
-    ; Advance ebx to after this line (skip CR/LF and the line itself)
-    ; ebx += lineLen
-    ; compute lineLen again:
-    lea eax, [OFFSET BUFFER_MEM]
-    add eax, ebx            ; eax = pointer to line start
-    ; but easier: we already computed lineLen in ecx (got_len2)
-    mov eax, ecx
-    add ebx, eax
+    ; Get line length from stack
+    pop ecx
+    
+    ; Advance offset by line length
+    add ebx, ecx
 
-    ; skip CR then LF if present
+    ; Skip CR/LF
     cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Dh
-    jne cont_loop_fixed
+    jne skip_lf_member
     inc ebx
+skip_lf_member:
     cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
     jne cont_loop_fixed
     inc ebx
@@ -433,26 +426,17 @@ cont_loop_fixed:
     jmp search_loop_fixed
 
 advance_offset_fixed:
-    ; when no comma or empty line -> skip this line
-    ; recompute line length in ecx
-    lea esi, [OFFSET BUFFER_MEM + ebx]
-    xor ecx, ecx
-find_eol_skip:
-    mov al, [esi + ecx]
-    cmp al, 0
-    je got_len_skip
-    cmp al, 0Dh
-    je got_len_skip
-    cmp al, 0Ah
-    je got_len_skip
-    inc ecx
-    jmp find_eol_skip
-got_len_skip:
+    ; Pop line length
+    pop ecx
+    
+    ; Skip this line
     add ebx, ecx
-    ; skip CRLF
+    
+    ; Skip CR/LF
     cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Dh
-    jne after_cr_fixed
+    jne skip_lf_member2
     inc ebx
+skip_lf_member2:
     cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
     jne after_cr_fixed
     inc ebx
@@ -478,9 +462,13 @@ LIB_LOGIN:
 		INVOKE MSG_DISPLAY, ADDR LIB_LOGIN_MSG
 		CALL READINT
 		CMP EAX, 987102
-		JE SHOW_FULL_MENU
+		JE LIB_LOGIN_SUCCESS
 		INVOKE MSG_DISPLAY, ADDR INVALID_CODE_MSG
 		JMP START
+
+LIB_LOGIN_SUCCESS:
+		INVOKE MSG_DISPLAY, ADDR LIB_SUCCESS_MSG
+		JMP SHOW_FULL_MENU
 
 ;----------------------------------------
 ;------------REGISTER MEMBERS------------
@@ -589,8 +577,89 @@ VIEW_MFILE:
 	0
 	invoke CloseHandle,
 	filehandle
-	mov edx, offset BUFFER_MEM ; Write String
+	; null-terminate buffer at bytesRead
+	mov eax, DWORD PTR bytesRead
+	lea edi, [OFFSET BUFFER_MEM]
+	add edi, eax
+	mov byte ptr [edi], 0
+
+	; Parse BUFFER_MEM line by line and print only the first CSV field (name)
+	mov esi, OFFSET BUFFER_MEM
+	xor ebx, ebx            ; offset into buffer
+
+vm_loop_file:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge vm_done_file
+
+	; line start = BUFFER_MEM + ebx
+	lea edi, [OFFSET BUFFER_MEM + ebx]
+	xor ecx, ecx
+vm_find_eol_file:
+	mov al, [edi + ecx]
+	cmp al, 0
+	je vm_proc_line_file
+	cmp al, 0Dh
+	je vm_proc_line_file
+	cmp al, 0Ah
+	je vm_proc_line_file
+	inc ecx
+	jmp vm_find_eol_file
+
+vm_proc_line_file:
+	cmp ecx, 0
+	je vm_advance_only_file
+
+	; copy up to first comma (or end) into TEMP_FIELD
+	lea esi, [OFFSET BUFFER_MEM + ebx]
+	mov edi, OFFSET TEMP_FIELD
+	xor edx, edx
+vm_copy_name_file:
+	mov al, [esi + edx]
+	cmp al, ','
+	je vm_name_done_file
+	cmp al, 0Dh
+	je vm_name_done_file
+	cmp al, 0Ah
+	je vm_name_done_file
+	mov [edi], al
+	inc edi
+	inc edx
+	cmp edx, ecx
+	jl vm_copy_name_file
+vm_name_done_file:
+	mov byte ptr [edi], 0
+
+	; print the name
+	mov edx, OFFSET TEMP_FIELD
 	call WriteString
+	call CRLF
+
+	; advance offset by this line length (ecx)
+	add ebx, ecx
+	; skip CR/LF if present
+	cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Dh
+	jne vm_loop_continue_file
+	inc ebx
+	cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
+	jne vm_loop_continue_file
+	inc ebx
+vm_loop_continue_file:
+	jmp vm_loop_file
+
+vm_advance_only_file:
+	; empty line - skip one char and continue
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Dh
+	jne vm_loop_after_advance_file
+	inc ebx
+	cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
+	jne vm_loop_after_advance_file
+	inc ebx
+vm_loop_after_advance_file:
+	jmp vm_loop_file
+
+vm_done_file:
 	JMP SHOW_FULL_MENU
 ;----------------------------------
 ;--------------ADD BOOKS-----------
@@ -784,17 +853,224 @@ VIEW_BFILE:
 	FILE_ATTRIBUTE_NORMAL, ; normal file attribute
 	0 ; not used
 	mov filehandle, eax ; Copy handle to variable
-	invoke ReadFile,
-	filehandle, ; file handle
-	addr BUFFER_BOOK, ; where to read
-	BUFFER_SIZE, ; num bytes to read
-	addr bytesRead, ; bytes actually read
-	0
-	invoke CloseHandle,
-	filehandle
-	mov edx, offset BUFFER_BOOK ; Write String
+	; Read entire file into BUFFER_BOOK (use helper to ensure full file is read)
+	CALL ReadAllBooks
+	; Display each CSV line with labels: Name, Author, Publisher, Genre, Year, ISBN
+	mov esi, OFFSET BUFFER_BOOK
+	xor ebx, ebx                ; offset into buffer
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je vb_done
+
+vb_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge vb_done
+
+	; esi currently base; set esi_line to line start
+	lea esi, [OFFSET BUFFER_BOOK]
+	add esi, ebx               ; esi -> start of current line
+
+	; find end of line (ecx = line length)
+	xor ecx, ecx
+vb_find_eol:
+	mov al, [esi + ecx]
+	cmp al, 0
+	je vb_proc_line
+	cmp al, 0Dh
+	je vb_proc_line
+	cmp al, 0Ah
+	je vb_proc_line
+	inc ecx
+	jmp vb_find_eol
+vb_proc_line:
+	cmp ecx, 0
+	je vb_advance_only
+
+	; copy fields sequentially from esi into the named buffers
+	; Field 1 -> BOOK_NAME_BUF
+	mov edi, OFFSET BOOK_NAME_BUF
+vb_copy_name:
+	mov al, [esi]
+	cmp al, ','
+	je vb_name_done
+	cmp al, 0Dh
+	je vb_name_done
+	cmp al, 0Ah
+	je vb_name_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp vb_copy_name
+vb_name_done:
+	mov byte ptr [edi], 0
+	; skip comma if present
+	cmp byte ptr [esi], ','
+	jne vb_after_name
+	inc esi
+vb_after_name:
+
+	; Field 2 -> BOOK_AUTHOR_BUF
+	mov edi, OFFSET BOOK_AUTHOR_BUF
+vb_copy_author:
+	mov al, [esi]
+	cmp al, ','
+	je vb_author_done
+	cmp al, 0Dh
+	je vb_author_done
+	cmp al, 0Ah
+	je vb_author_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp vb_copy_author
+vb_author_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne vb_after_author
+	inc esi
+vb_after_author:
+
+	; Field 3 -> BOOK_PUBLISHER_BUF
+	mov edi, OFFSET BOOK_PUBLISHER_BUF
+vb_copy_publisher:
+	mov al, [esi]
+	cmp al, ','
+	je vb_publisher_done
+	cmp al, 0Dh
+	je vb_publisher_done
+	cmp al, 0Ah
+	je vb_publisher_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp vb_copy_publisher
+vb_publisher_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne vb_after_publisher
+	inc esi
+vb_after_publisher:
+
+	; Field 4 -> BOOK_GENRE_BUF
+	mov edi, OFFSET BOOK_GENRE_BUF
+vb_copy_genre:
+	mov al, [esi]
+	cmp al, ','
+	je vb_genre_done
+	cmp al, 0Dh
+	je vb_genre_done
+	cmp al, 0Ah
+	je vb_genre_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp vb_copy_genre
+vb_genre_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne vb_after_genre
+	inc esi
+vb_after_genre:
+
+	; Field 5 -> BOOK_YEAR_BUF
+	mov edi, OFFSET BOOK_YEAR_BUF
+vb_copy_year:
+	mov al, [esi]
+	cmp al, ','
+	je vb_year_done
+	cmp al, 0Dh
+	je vb_year_done
+	cmp al, 0Ah
+	je vb_year_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp vb_copy_year
+vb_year_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne vb_after_year
+	inc esi
+vb_after_year:
+
+	; Field 6 -> BOOK_ISBN_BUF (rest of line)
+	mov edi, OFFSET BOOK_ISBN_BUF
+vb_copy_isbn:
+	mov al, [esi]
+	cmp al, 0Dh
+	je vb_isbn_done
+	cmp al, 0Ah
+	je vb_isbn_done
+	cmp al, 0
+	je vb_isbn_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp vb_copy_isbn
+vb_isbn_done:
+	mov byte ptr [edi], 0
+
+	; Print nicely (spacing only) - header already printed before loop
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+
+	; Print Name label and name - just print normally
+	INVOKE MSG_DISPLAY, ADDR NAME_LABEL
+	mov edx, OFFSET BOOK_NAME_BUF
 	call WriteString
-	JMP START
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR AUTHOR_LABEL
+	mov edx, OFFSET BOOK_AUTHOR_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR PUBLISHER_LABEL
+	mov edx, OFFSET BOOK_PUBLISHER_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR GENRE_LABEL
+	mov edx, OFFSET BOOK_GENRE_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR YEAR_LABEL
+	mov edx, OFFSET BOOK_YEAR_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR ISBN_LABEL
+	mov edx, OFFSET BOOK_ISBN_BUF
+	call WriteString
+	call CRLF
+
+	; compute new offset = esi - base
+	mov eax, esi
+	sub eax, OFFSET BUFFER_BOOK
+	mov ebx, eax
+	; skip CR/LF if present
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne vb_loop_continue
+	inc ebx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne vb_loop_continue
+	inc ebx
+vb_loop_continue:
+	jmp vb_loop
+
+vb_advance_only:
+	; empty line - just skip
+	lea eax, [OFFSET BUFFER_BOOK]
+	add eax, ebx
+	; advance by 1 (skip possible CR/LF)
+	inc eax
+	sub eax, OFFSET BUFFER_BOOK
+	mov ebx, eax
+	jmp vb_loop
+
+vb_done:
+	JMP SHOW_FULL_MENU
 
 ; Librarian menu functions (placeholders)
 VIEW_OVERDUE_FUNC:
@@ -911,536 +1187,775 @@ SORT_ISBN_DESC:
     INVOKE MSG_DISPLAY, ADDR SORT_ISBN_DESC_MSG
     JMP VIEW_SORTED_FUNC
 
-; Search menu functions - ROBUST IMPLEMENTATION
+; Search menu functions (placeholders)
 SEARCH_BY_NAME_FUNC:
-	; Prompt for search term
-	INVOKE MSG_DISPLAY, ADDR SEARCH_NAME_MSG
-	mov edx, OFFSET SEARCH_INPUT_BUF
-	mov ecx, 100
+	; Prompt for book name to search
+	INVOKE MSG_DISPLAY, ADDR BOOK_NAME_PROMPT
+	mov edx, OFFSET BOOK_NAME_BUF
+	mov ecx, BOOK_NAME_SIZE
 	CALL READSTRING
-	
-	; Convert to uppercase for case-insensitive search
-	INVOKE Str_ucase, ADDR SEARCH_INPUT_BUF
-	
-	; Clear buffer before reuse
-	mov ecx, BUFFER_SIZE
-	mov edi, OFFSET BUFFER_BOOK
-	mov al, 0
-	rep stosb
-	
+
 	; Open BOOKS.txt for reading
 	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
-	cmp eax, INVALID_HANDLE_VALUE
-	je search_name_error
 	mov filehandle, eax
-	
-	; Read file into buffer
-	invoke ReadFile, filehandle, ADDR BUFFER_BOOK, BUFFER_SIZE, ADDR bytesRead, 0
-	invoke CloseHandle, filehandle
-	
-	; Check if file is empty
+	cmp eax, INVALID_HANDLE_VALUE
+	je search_books_notfound
+
+	; Read the whole file into BUFFER_BOOK
+	CALL ReadAllBooks
+
+	; check bytesRead
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
-	je search_name_no_results
+	je search_books_notfound
+
+	; Scan buffer line by line and match book name (first CSV field)
+	xor ebx, ebx ; offset in buffer
+
+search_name_loop_fixed:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge search_name_done_fixed
+
+	; Calculate line start pointer (don't use ESI here, keep it safe)
+	lea edi, [OFFSET BUFFER_BOOK + ebx]
 	
-	; Display search results header
-	INVOKE MSG_DISPLAY, ADDR SEARCH_RESULTS_MSG
-	
-	; Initialize search variables
-	mov esi, OFFSET BUFFER_BOOK
-	mov FOUND, 0
-	
-next_line_name:
-	cmp byte ptr [esi], 0
-	je done_search_name
-	
-	; Copy one line to temp buffer
-	mov edi, OFFSET TEMP_LINE
-copy_line_name:
-	lodsb
+	; Find line length
+	xor ecx, ecx
+find_eol_name_fixed:
+	mov al, [edi + ecx]
+	cmp al, 0
+	je process_name_line_fixed
 	cmp al, 0Dh
-	je end_line_name
+	je process_name_line_fixed
 	cmp al, 0Ah
-	je end_line_name
-	cmp al, 0
-	je end_line_name
-	stosb
-	jmp copy_line_name
-	
-end_line_name:
-	mov byte ptr [edi], 0
-	
-	; Parse first field (book name) - simple approach
-	mov esi, OFFSET TEMP_LINE
-	mov edi, OFFSET FIELD_BUF
-	mov ecx, 0
-copy_book_name:
-	mov al, [esi + ecx]
-	cmp al, ','
-	je name_done
-	cmp al, 0
-	je name_done
-	mov [edi + ecx], al
+	je process_name_line_fixed
 	inc ecx
-	jmp copy_book_name
-name_done:
-	mov byte ptr [edi + ecx], 0
+	jmp find_eol_name_fixed
+
+process_name_line_fixed:
+	; Store line length on stack for later use
+	push ecx
 	
-	; Convert to uppercase and check for exact match
-	INVOKE Str_ucase, ADDR FIELD_BUF
-	INVOKE Str_compare, ADDR FIELD_BUF, ADDR SEARCH_INPUT_BUF
-	cmp eax, 0
-	jne skip_print_name
+	cmp ecx, 0
+	je advance_name_offset_fixed_pop
+
+	; find comma index in edx (0..ecx-1)
+	xor edx, edx
+find_comma_name_fixed:
+	cmp edx, ecx
+	jge advance_name_offset_fixed_pop
+	cmp byte ptr [edi + edx], ','
+	je got_comma_name_fixed
+	inc edx
+	jmp find_comma_name_fixed
+
+got_comma_name_fixed:
+	; Save edx (field length) and copy first field into TEMP_FIELD
+	push edx
+	push edi
 	
-	; Match found - display the entire book line
+	; Source: current line start (edi)
+	; Dest: TEMP_FIELD
+	; Length: edx
+	mov esi, edi
+	mov edi, OFFSET TEMP_FIELD
+	mov ecx, edx
+copy_field_name_fixed:
+	cmp ecx, 0
+	je term_field_name_fixed
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_field_name_fixed
+term_field_name_fixed:
+	mov byte ptr [edi], 0
+
+	; Restore edi (line start pointer)
+	pop edi
+	pop edx
+	
+	; compare user input BOOK_NAME_BUF with TEMP_FIELD
+	INVOKE Str_compare, ADDR BOOK_NAME_BUF, ADDR TEMP_FIELD
+	jne continue_name_fixed
+
+	; match -> parse and display with labels
+	; Get line length from stack (don't pop yet)
+	mov ecx, [esp]
+	
+	; Copy full line to TEMP_LINE
+	push edi
+	mov esi, edi
+	mov edi, OFFSET TEMP_LINE
+copy_line_to_temp_fixed:
+	cmp ecx, 0
+	je term_temp_line_fixed
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_line_to_temp_fixed
+term_temp_line_fixed:
+	mov byte ptr [edi], 0
+	pop edi
+	
+	; Display formatted output with labels
 	mov edx, OFFSET TEMP_LINE
-	call WriteString
-	call Crlf
-	mov FOUND, 1
+	call DisplayBookLine
+
+continue_name_fixed:
+	; Get line length from stack
+	pop ecx
 	
-skip_print_name:
-	cmp byte ptr [esi], 0
-	je done_search_name
+	; advance offset by lineLen and skip CR/LF
+	add ebx, ecx
 	
-	; Skip CR/LF
-	cmp byte ptr [esi], 0Dh
-	jne cont_name
-	inc esi
-	cmp byte ptr [esi], 0Ah
-	jne cont_name
-	inc esi
-cont_name:
-	jmp next_line_name
+	; skip CR then LF if present
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_name_fixed
+	inc ebx
+skip_lf_name_fixed:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne cont_loop_name_fixed
+	inc ebx
+cont_loop_name_fixed:
+	jmp search_name_loop_fixed
+
+advance_name_offset_fixed_pop:
+	; Pop the line length we pushed earlier
+	pop ecx
 	
-done_search_name:
-	cmp FOUND, 0
-	jne exit_search_name
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	
-exit_search_name:
-	JMP SEARCH_BOOK_FUNC
-	
-search_name_no_results:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	JMP SEARCH_BOOK_FUNC
-	
-search_name_error:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
+	; Skip this line
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_name_fixed2
+	inc ebx
+skip_lf_name_fixed2:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_name_fixed
+	inc ebx
+after_cr_name_fixed:
+	jmp search_name_loop_fixed
+
+search_name_done_fixed:
 	JMP SEARCH_BOOK_FUNC
 
+search_books_notfound:
+	INVOKE MSG_DISPLAY, ADDR NO_BOOKS_MSG
+	JMP SEARCH_BOOK_FUNC
+
+
 SEARCH_BY_AUTHOR_FUNC:
-	; Prompt for search term
-	INVOKE MSG_DISPLAY, ADDR SEARCH_AUTHOR_MSG
-	mov edx, OFFSET SEARCH_INPUT_BUF
-	mov ecx, 100
+	; Prompt for author name to search
+	INVOKE MSG_DISPLAY, ADDR BOOK_AUTHOR_PROMPT
+	mov edx, OFFSET BOOK_AUTHOR_BUF
+	mov ecx, BOOK_AUTHOR_SIZE
 	CALL READSTRING
-	
-	; Convert to uppercase for case-insensitive search
-	INVOKE Str_ucase, ADDR SEARCH_INPUT_BUF
-	
-	; Clear buffer before reuse
-	mov ecx, BUFFER_SIZE
-	mov edi, OFFSET BUFFER_BOOK
-	mov al, 0
-	rep stosb
-	
-	; Open BOOKS.txt for reading
-	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
-	cmp eax, INVALID_HANDLE_VALUE
-	je search_author_error
+
+	; Open BOOKS.txt
+	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
 	mov filehandle, eax
-	
-	; Read file into buffer
-	invoke ReadFile, filehandle, ADDR BUFFER_BOOK, BUFFER_SIZE, ADDR bytesRead, 0
-	invoke CloseHandle, filehandle
-	
-	; Check if file is empty
+	cmp eax, INVALID_HANDLE_VALUE
+	je search_books_notfound_author
+
+	; Read the whole file into BUFFER_BOOK
+	CALL ReadAllBooks
+
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
-	je search_author_no_results
+	je search_books_notfound_author
+
+	; Scan lines and compare second CSV field (author)
+	xor ebx, ebx ; offset
+
+search_author_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge search_author_done
+
+	; Calculate line start pointer
+	lea edi, [OFFSET BUFFER_BOOK + ebx]
 	
-	; Display search results header
-	INVOKE MSG_DISPLAY, ADDR SEARCH_RESULTS_MSG
-	
-	; Initialize search variables
-	mov esi, OFFSET BUFFER_BOOK
-	mov FOUND, 0
-	
-next_line_author:
-	cmp byte ptr [esi], 0
-	je done_search_author
-	
-	; Copy one line to temp buffer
-	mov edi, OFFSET TEMP_LINE
-copy_line_author:
-	lodsb
-	cmp al, 0Dh
-	je end_line_author
-	cmp al, 0Ah
-	je end_line_author
+	; Find line length
+	xor ecx, ecx
+find_eol_author:
+	mov al, [edi + ecx]
 	cmp al, 0
-	je end_line_author
-	stosb
-	jmp copy_line_author
+	je process_author_line
+	cmp al, 0Dh
+	je process_author_line
+	cmp al, 0Ah
+	je process_author_line
+	inc ecx
+	jmp find_eol_author
+
+process_author_line:
+	; Store line length on stack
+	push ecx
 	
-end_line_author:
+	cmp ecx, 0
+	je advance_author_offset
+	
+	; Find first comma (end of book name field)
+	xor edx, edx
+find_first_comma_author:
+	mov al, [edi + edx]
+	cmp al, ','
+	je got_first_comma_author
+	cmp al, 0
+	je no_author_field
+	cmp al, 0Dh
+	je no_author_field
+	cmp al, 0Ah
+	je no_author_field
+	inc edx
+	cmp edx, ecx
+	jge no_author_field
+	jmp find_first_comma_author
+	
+got_first_comma_author:
+	inc edx ; edx now points to start of author field
+	push edx ; save author field start position
+	
+	; Find end of author field (next comma or EOL)
+	mov ebp, edx
+find_end_author2:
+	mov al, [edi + ebp]
+	cmp al, 0
+	je got_end_author2
+	cmp al, 0Dh
+	je got_end_author2
+	cmp al, 0Ah
+	je got_end_author2
+	cmp al, ','
+	je got_end_author2
+	inc ebp
+	jmp find_end_author2
+	
+got_end_author2:
+	; Calculate author field length (ebp - edx)
+	mov eax, ebp
+	sub eax, edx
+	cmp eax, 0
+	jle restore_author_and_continue
+	
+	; Copy author field to TEMP_FIELD
+	push edi
+	push ebp
+	
+	lea esi, [edi + edx]  ; source = line start + author field offset
+	mov edi, OFFSET TEMP_FIELD
+	mov ecx, eax  ; length
+copy_author_to_temp:
+	cmp ecx, 0
+	je term_author_temp
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_author_to_temp
+term_author_temp:
 	mov byte ptr [edi], 0
 	
-	; Parse author (2nd field) - simple approach
-	mov esi, OFFSET TEMP_LINE
-	mov edi, OFFSET FIELD_BUF
-	mov ecx, 0
-	mov edx, 0  ; comma counter
+	pop ebp
+	pop edi
 	
-find_author_start:
-	mov al, [esi + ecx]
-	cmp al, ','
-	je found_first_comma
-	cmp al, 0
-	je next_line_author
-	inc ecx
-	jmp find_author_start
+	; Compare with user input
+	INVOKE Str_compare, ADDR BOOK_AUTHOR_BUF, ADDR TEMP_FIELD
+	jne restore_author_and_continue
 	
-found_first_comma:
-	inc ecx  ; move past first comma
-	mov ebx, 0  ; counter for author field
+	; Match found - copy and display with labels
+	mov ecx, [esp + 4]  ; get line length from stack (skip author field start)
 	
-copy_author_field:
-	mov al, [esi + ecx]
-	cmp al, ','
-	je author_done
-	cmp al, 0
-	je author_done
-	mov [edi + ebx], al
-	inc ecx
-	inc ebx
-	jmp copy_author_field
+	push edi
+	lea esi, [OFFSET BUFFER_BOOK + ebx]
+	mov edi, OFFSET TEMP_LINE
+copy_line_author:
+	cmp ecx, 0
+	je term_temp_line_author
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_line_author
+term_temp_line_author:
+	mov byte ptr [edi], 0
+	pop edi
 	
-author_done:
-	mov byte ptr [edi + ebx], 0
-	
-	; Convert to uppercase and check for exact match
-	INVOKE Str_ucase, ADDR FIELD_BUF
-	INVOKE Str_compare, ADDR FIELD_BUF, ADDR SEARCH_INPUT_BUF
-	cmp eax, 0
-	jne skip_print_author
-	
-	; Match found - display the entire book line
 	mov edx, OFFSET TEMP_LINE
-	call WriteString
-	call Crlf
-	mov FOUND, 1
+	call DisplayBookLine
+
+restore_author_and_continue:
+	; Clean up stack (author field start)
+	pop edx
+	; Get line length
+	pop ecx
 	
-skip_print_author:
-	cmp byte ptr [esi], 0
-	je done_search_author
+	; Advance offset by line length
+	add ebx, ecx
 	
 	; Skip CR/LF
-	cmp byte ptr [esi], 0Dh
-	jne cont_author
-	inc esi
-	cmp byte ptr [esi], 0Ah
-	jne cont_author
-	inc esi
-cont_author:
-	jmp next_line_author
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_author
+	inc ebx
+skip_lf_author:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_author
+	inc ebx
+after_cr_author:
+	jmp search_author_loop
+
+advance_author_offset:
+	; Pop line length
+	pop ecx
 	
-done_search_author:
-	cmp FOUND, 0
-	jne exit_search_author
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	
-exit_search_author:
+	; Skip this line
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_author2
+	inc ebx
+skip_lf_author2:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_author2
+	inc ebx
+after_cr_author2:
+	jmp search_author_loop
+
+no_author_field:
+	; Pop line length and skip line
+	pop ecx
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_author3
+	inc ebx
+skip_lf_author3:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_author3
+	inc ebx
+after_cr_author3:
+	jmp search_author_loop
+
+search_author_done:
 	JMP SEARCH_BOOK_FUNC
-	
-search_author_no_results:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	JMP SEARCH_BOOK_FUNC
-	
-search_author_error:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
+
+search_books_notfound_author:
+	INVOKE MSG_DISPLAY, ADDR NO_BOOKS_MSG
 	JMP SEARCH_BOOK_FUNC
 
 SEARCH_BY_PUBLISHER_FUNC:
-	; Prompt for search term
-	INVOKE MSG_DISPLAY, ADDR SEARCH_PUBLISHER_MSG
-	mov edx, OFFSET SEARCH_INPUT_BUF
-	mov ecx, 100
+	; Prompt for publisher name to search
+	INVOKE MSG_DISPLAY, ADDR BOOK_PUBLISHER_PROMPT
+	mov edx, OFFSET BOOK_PUBLISHER_BUF
+	mov ecx, BOOK_PUBLISHER_SIZE
 	CALL READSTRING
-	
-	; Convert to uppercase for case-insensitive search
-	INVOKE Str_ucase, ADDR SEARCH_INPUT_BUF
-	
-	; Clear buffer before reuse
-	mov ecx, BUFFER_SIZE
-	mov edi, OFFSET BUFFER_BOOK
-	mov al, 0
-	rep stosb
-	
-	; Open BOOKS.txt for reading
-	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
-	cmp eax, INVALID_HANDLE_VALUE
-	je search_publisher_error
+
+	; Open BOOKS.txt
+	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
 	mov filehandle, eax
-	
-	; Read file into buffer
-	invoke ReadFile, filehandle, ADDR BUFFER_BOOK, BUFFER_SIZE, ADDR bytesRead, 0
-	invoke CloseHandle, filehandle
-	
-	; Check if file is empty
+	cmp eax, INVALID_HANDLE_VALUE
+	je search_books_notfound_publisher
+
+	; Read the whole file into BUFFER_BOOK
+	CALL ReadAllBooks
+
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
-	je search_publisher_no_results
+	je search_books_notfound_publisher
+
+	; Parse lines and match publisher (third CSV field)
+	xor ebx, ebx
+
+search_publisher_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge search_publisher_done
+
+	; Calculate line start
+	lea edi, [OFFSET BUFFER_BOOK + ebx]
 	
-	; Display search results header
-	INVOKE MSG_DISPLAY, ADDR SEARCH_RESULTS_MSG
-	
-	; Initialize search variables
-	mov esi, OFFSET BUFFER_BOOK
-	mov FOUND, 0
-	
-next_line_publisher:
-	cmp byte ptr [esi], 0
-	je done_search_publisher
-	
-	; Copy one line to temp buffer
-	mov edi, OFFSET TEMP_LINE
-copy_line_publisher:
-	lodsb
-	cmp al, 0Dh
-	je end_line_publisher
-	cmp al, 0Ah
-	je end_line_publisher
+	; Find line length
+	xor ecx, ecx
+find_eol_publisher:
+	mov al, [edi + ecx]
 	cmp al, 0
-	je end_line_publisher
-	stosb
-	jmp copy_line_publisher
+	je process_publisher_line
+	cmp al, 0Dh
+	je process_publisher_line
+	cmp al, 0Ah
+	je process_publisher_line
+	inc ecx
+	jmp find_eol_publisher
+
+process_publisher_line:
+	; Store line length
+	push ecx
 	
-end_line_publisher:
+	cmp ecx, 0
+	je advance_publisher_offset
+
+	; Find first comma (skip book name)
+	xor edx, edx
+find_first_comma_pub:
+	mov al, [edi + edx]
+	cmp al, ','
+	je found_first_comma_pub
+	cmp al, 0
+	je no_publisher_field
+	cmp al, 0Dh
+	je no_publisher_field
+	cmp al, 0Ah
+	je no_publisher_field
+	inc edx
+	cmp edx, ecx
+	jge no_publisher_field
+	jmp find_first_comma_pub
+	
+found_first_comma_pub:
+	inc edx
+	
+	; Find second comma (skip author)
+find_second_comma_pub:
+	mov al, [edi + edx]
+	cmp al, ','
+	je found_second_comma_pub
+	cmp al, 0
+	je no_publisher_field
+	cmp al, 0Dh
+	je no_publisher_field
+	cmp al, 0Ah
+	je no_publisher_field
+	inc edx
+	cmp edx, ecx
+	jge no_publisher_field
+	jmp find_second_comma_pub
+	
+found_second_comma_pub:
+	inc edx ; edx now points to start of publisher field
+	push edx
+	
+	; Find end of publisher field
+	mov ebp, edx
+find_end_publisher2:
+	mov al, [edi + ebp]
+	cmp al, 0
+	je got_end_publisher2
+	cmp al, 0Dh
+	je got_end_publisher2
+	cmp al, 0Ah
+	je got_end_publisher2
+	cmp al, ','
+	je got_end_publisher2
+	inc ebp
+	jmp find_end_publisher2
+	
+got_end_publisher2:
+	; Calculate publisher field length
+	mov eax, ebp
+	sub eax, edx
+	cmp eax, 0
+	jle restore_publisher_and_continue
+	
+	; Copy publisher to TEMP_FIELD
+	push edi
+	push ebp
+	
+	lea esi, [edi + edx]
+	mov edi, OFFSET TEMP_FIELD
+	mov ecx, eax
+copy_publisher_to_temp:
+	cmp ecx, 0
+	je term_publisher_temp
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_publisher_to_temp
+term_publisher_temp:
 	mov byte ptr [edi], 0
 	
-	; Parse publisher (3rd field) - simple approach
-	mov esi, OFFSET TEMP_LINE
-	mov edi, OFFSET FIELD_BUF
-	mov ecx, 0
-	mov edx, 0  ; comma counter
+	pop ebp
+	pop edi
 	
-find_publisher_start:
-	mov al, [esi + ecx]
-	cmp al, ','
-	je found_comma_publisher
-	cmp al, 0
-	je next_line_publisher
-	inc ecx
-	jmp find_publisher_start
+	; Compare
+	INVOKE Str_compare, ADDR BOOK_PUBLISHER_BUF, ADDR TEMP_FIELD
+	jne restore_publisher_and_continue
 	
-found_comma_publisher:
-	inc edx
-	cmp edx, 2  ; we want the 3rd field, so skip 2 commas
-	jne continue_publisher_search
-	; Found 2nd comma, now copy until 3rd comma
-	inc ecx
-	mov ebx, 0  ; counter for publisher field
+	; Match - copy and display with labels
+	mov ecx, [esp + 4]
 	
-copy_publisher_field:
-	mov al, [esi + ecx]
-	cmp al, ','
-	je publisher_done
-	cmp al, 0
-	je publisher_done
-	mov [edi + ebx], al
-	inc ecx
-	inc ebx
-	jmp copy_publisher_field
+	push edi
+	lea esi, [OFFSET BUFFER_BOOK + ebx]
+	mov edi, OFFSET TEMP_LINE
+copy_line_pub:
+	cmp ecx, 0
+	je term_temp_line_pub
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_line_pub
+term_temp_line_pub:
+	mov byte ptr [edi], 0
+	pop edi
 	
-continue_publisher_search:
-	inc ecx
-	jmp find_publisher_start
-	
-publisher_done:
-	mov byte ptr [edi + ebx], 0
-	
-	; Convert to uppercase and check for exact match
-	INVOKE Str_ucase, ADDR FIELD_BUF
-	INVOKE Str_compare, ADDR FIELD_BUF, ADDR SEARCH_INPUT_BUF
-	cmp eax, 0
-	jne skip_print_publisher
-	
-	; Match found - display the entire book line
 	mov edx, OFFSET TEMP_LINE
-	call WriteString
-	call Crlf
-	mov FOUND, 1
+	call DisplayBookLine
+
+restore_publisher_and_continue:
+	pop edx
+	pop ecx
 	
-skip_print_publisher:
-	cmp byte ptr [esi], 0
-	je done_search_publisher
+	; Advance offset
+	add ebx, ecx
 	
 	; Skip CR/LF
-	cmp byte ptr [esi], 0Dh
-	jne cont_publisher
-	inc esi
-	cmp byte ptr [esi], 0Ah
-	jne cont_publisher
-	inc esi
-cont_publisher:
-	jmp next_line_publisher
-	
-done_search_publisher:
-	cmp FOUND, 0
-	jne exit_search_publisher
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	
-exit_search_publisher:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_publisher
+	inc ebx
+skip_lf_publisher:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_publisher
+	inc ebx
+after_cr_publisher:
+	jmp search_publisher_loop
+
+advance_publisher_offset:
+	pop ecx
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_publisher2
+	inc ebx
+skip_lf_publisher2:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_publisher2
+	inc ebx
+after_cr_publisher2:
+	jmp search_publisher_loop
+
+no_publisher_field:
+	pop ecx
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_publisher3
+	inc ebx
+skip_lf_publisher3:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_publisher3
+	inc ebx
+after_cr_publisher3:
+	jmp search_publisher_loop
+
+search_publisher_done:
 	JMP SEARCH_BOOK_FUNC
-	
-search_publisher_no_results:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	JMP SEARCH_BOOK_FUNC
-	
-search_publisher_error:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
+
+search_books_notfound_publisher:
+	INVOKE MSG_DISPLAY, ADDR NO_BOOKS_MSG
 	JMP SEARCH_BOOK_FUNC
 
 SEARCH_BY_YEAR_FUNC:
-	; Prompt for search term
-	INVOKE MSG_DISPLAY, ADDR SEARCH_YEAR_MSG
-	mov edx, OFFSET SEARCH_INPUT_BUF
-	mov ecx, 100
+	; Prompt for year to search
+	INVOKE MSG_DISPLAY, ADDR BOOK_YEAR_PROMPT
+	mov edx, OFFSET BOOK_YEAR_BUF
+	mov ecx, 10
 	CALL READSTRING
-	
-	; Convert to uppercase for case-insensitive search
-	INVOKE Str_ucase, ADDR SEARCH_INPUT_BUF
-	
-	; Clear buffer before reuse
-	mov ecx, BUFFER_SIZE
-	mov edi, OFFSET BUFFER_BOOK
-	mov al, 0
-	rep stosb
-	
-	; Open BOOKS.txt for reading
-	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
-	cmp eax, INVALID_HANDLE_VALUE
-	je search_year_error
+
+	; Open BOOKS.txt
+	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
 	mov filehandle, eax
-	
-	; Read file into buffer
-	invoke ReadFile, filehandle, ADDR BUFFER_BOOK, BUFFER_SIZE, ADDR bytesRead, 0
-	invoke CloseHandle, filehandle
-	
-	; Check if file is empty
+	cmp eax, INVALID_HANDLE_VALUE
+	je search_books_notfound_year
+
+	; Read the whole file into BUFFER_BOOK
+	CALL ReadAllBooks
+
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
-	je search_year_no_results
+	je search_books_notfound_year
+
+	; Parse lines and match year (fifth CSV field; name,author,publisher,genre,year,isbn)
+	xor ebx, ebx
+
+search_year_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge search_year_done
+
+	; Calculate line start
+	lea edi, [OFFSET BUFFER_BOOK + ebx]
 	
-	; Display search results header
-	INVOKE MSG_DISPLAY, ADDR SEARCH_RESULTS_MSG
-	
-	; Initialize search variables
-	mov esi, OFFSET BUFFER_BOOK
-	mov FOUND, 0
-	
-next_line_year:
-	cmp byte ptr [esi], 0
-	je done_search_year
-	
-	; Copy one line to temp buffer
-	mov edi, OFFSET TEMP_LINE
-copy_line_year:
-	lodsb
-	cmp al, 0Dh
-	je end_line_year
-	cmp al, 0Ah
-	je end_line_year
+	; Find line length
+	xor ecx, ecx
+find_eol_year:
+	mov al, [edi + ecx]
 	cmp al, 0
-	je end_line_year
-	stosb
-	jmp copy_line_year
+	je process_year_line
+	cmp al, 0Dh
+	je process_year_line
+	cmp al, 0Ah
+	je process_year_line
+	inc ecx
+	jmp find_eol_year
+
+process_year_line:
+	; Store line length
+	push ecx
 	
-end_line_year:
+	cmp ecx, 0
+	je advance_year_offset
+
+	; Find the start of 5th field (year) by counting 4 commas
+	xor edx, edx  ; index
+	xor ebp, ebp  ; comma count
+
+find_year_field:
+	mov al, [edi + edx]
+	cmp al, 0
+	je no_year_field
+	cmp al, 0Dh
+	je no_year_field
+	cmp al, 0Ah
+	je no_year_field
+	cmp al, ','
+	jne skip_comma_year
+	inc ebp
+	cmp ebp, 4
+	je year_field_start
+skip_comma_year:
+	inc edx
+	cmp edx, ecx
+	jge no_year_field
+	jmp find_year_field
+
+year_field_start:
+	inc edx  ; move past the 4th comma
+	push edx
+	
+	; Find end of year field
+	mov ebp, edx
+find_end_year2:
+	mov al, [edi + ebp]
+	cmp al, 0
+	je got_end_year2
+	cmp al, 0Dh
+	je got_end_year2
+	cmp al, 0Ah
+	je got_end_year2
+	cmp al, ','
+	je got_end_year2
+	inc ebp
+	jmp find_end_year2
+	
+got_end_year2:
+	; Calculate year field length
+	mov eax, ebp
+	sub eax, edx
+	cmp eax, 0
+	jle restore_year_and_continue
+	
+	; Copy year to TEMP_FIELD
+	push edi
+	push ebp
+	
+	lea esi, [edi + edx]
+	mov edi, OFFSET TEMP_FIELD
+	mov ecx, eax
+copy_year_to_temp:
+	cmp ecx, 0
+	je term_year_temp
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_year_to_temp
+term_year_temp:
 	mov byte ptr [edi], 0
 	
-	; Parse year (5th field) - simple approach
-	mov esi, OFFSET TEMP_LINE
-	mov edi, OFFSET FIELD_BUF
-	mov ecx, 0
-	mov edx, 0  ; comma counter
+	pop ebp
+	pop edi
 	
-find_year_start:
-	mov al, [esi + ecx]
-	cmp al, ','
-	je found_comma_year
-	cmp al, 0
-	je next_line_year
-	inc ecx
-	jmp find_year_start
+	; Compare
+	INVOKE Str_compare, ADDR BOOK_YEAR_BUF, ADDR TEMP_FIELD
+	jne restore_year_and_continue
 	
-found_comma_year:
-	inc edx
-	cmp edx, 4  ; we want the 5th field, so skip 4 commas
-	jne continue_year_search
-	; Found 4th comma, now copy until 5th comma
-	inc ecx
-	mov ebx, 0  ; counter for year field
+	; Match - copy and display with labels
+	mov ecx, [esp + 4]
 	
-copy_year_field:
-	mov al, [esi + ecx]
-	cmp al, ','
-	je year_done
-	cmp al, 0
-	je year_done
-	mov [edi + ebx], al
-	inc ecx
-	inc ebx
-	jmp copy_year_field
+	push edi
+	lea esi, [OFFSET BUFFER_BOOK + ebx]
+	mov edi, OFFSET TEMP_LINE
+copy_line_year:
+	cmp ecx, 0
+	je term_temp_line_year
+	mov al, [esi]
+	mov [edi], al
+	inc esi
+	inc edi
+	dec ecx
+	jmp copy_line_year
+term_temp_line_year:
+	mov byte ptr [edi], 0
+	pop edi
 	
-continue_year_search:
-	inc ecx
-	jmp find_year_start
-	
-year_done:
-	mov byte ptr [edi + ebx], 0
-	
-	; Convert to uppercase and check for exact match
-	INVOKE Str_ucase, ADDR FIELD_BUF
-	INVOKE Str_compare, ADDR FIELD_BUF, ADDR SEARCH_INPUT_BUF
-	cmp eax, 0
-	jne skip_print_year
-	
-	; Match found - display the entire book line
 	mov edx, OFFSET TEMP_LINE
-	call WriteString
-	call Crlf
-	mov FOUND, 1
+	call DisplayBookLine
+
+restore_year_and_continue:
+	pop edx
+	pop ecx
 	
-skip_print_year:
-	cmp byte ptr [esi], 0
-	je done_search_year
+	; Advance offset
+	add ebx, ecx
 	
 	; Skip CR/LF
-	cmp byte ptr [esi], 0Dh
-	jne cont_year
-	inc esi
-	cmp byte ptr [esi], 0Ah
-	jne cont_year
-	inc esi
-cont_year:
-	jmp next_line_year
-	
-done_search_year:
-	cmp FOUND, 0
-	jne exit_search_year
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	
-exit_search_year:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_year
+	inc ebx
+skip_lf_year:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_year
+	inc ebx
+after_cr_year:
+	jmp search_year_loop
+
+advance_year_offset:
+	pop ecx
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_year2
+	inc ebx
+skip_lf_year2:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_year2
+	inc ebx
+after_cr_year2:
+	jmp search_year_loop
+
+no_year_field:
+	pop ecx
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne skip_lf_year3
+	inc ebx
+skip_lf_year3:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne after_cr_year3
+	inc ebx
+after_cr_year3:
+	jmp search_year_loop
+
+search_year_done:
 	JMP SEARCH_BOOK_FUNC
-	
-search_year_no_results:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
-	JMP SEARCH_BOOK_FUNC
-	
-search_year_error:
-	INVOKE MSG_DISPLAY, ADDR NO_RESULTS_MSG
+
+search_books_notfound_year:
+	INVOKE MSG_DISPLAY, ADDR NO_BOOKS_MSG
 	JMP SEARCH_BOOK_FUNC
 
 	EXIT_MENU:
@@ -1463,4 +1978,251 @@ STRING_INPUT PROC USES EDX ECX, var: ptr dword
 	CALL READSTRING
 	RET
 	STRING_INPUT ENDP
+
+; ReadAllBooks - helper to read entire BOOKS.txt into BUFFER_BOOK
+; Expects: filehandle contains an open handle to BOOKS.txt
+; Returns: bytesRead (dword variable) updated; buffer null-terminated
+ReadAllBooks PROC
+	; preserve registers
+	pushad
+
+	; get file size (low dword)
+	INVOKE SetFilePointer, filehandle, 0, 0, FILE_END
+	mov esi, eax            ; esi = file size low
+
+	; move file pointer back to beginning
+	INVOKE SetFilePointer, filehandle, 0, 0, FILE_BEGIN
+
+	; limit to BUFFER_SIZE-1 to leave space for terminating NUL
+	mov eax, BUFFER_SIZE
+	dec eax
+	cmp esi, eax
+	jle size_ok
+	mov esi, eax
+size_ok:
+
+	; Read file (esi bytes) into BUFFER_BOOK
+	INVOKE ReadFile, filehandle, ADDR BUFFER_BOOK, esi, ADDR bytesRead, 0
+
+	; close handle
+	invoke CloseHandle, filehandle
+
+	; null-terminate buffer at bytesRead
+	mov eax, DWORD PTR bytesRead
+	lea edi, [OFFSET BUFFER_BOOK]
+	add edi, eax
+	mov byte ptr [edi], 0
+
+	popad
+	ret
+ReadAllBooks ENDP
+
+; DisplayBookLine - helper to parse and display a CSV book line with labels
+; Expects: EDX = pointer to null-terminated CSV line
+; Modifies: book buffers and displays formatted output
+DisplayBookLine PROC
+	push eax
+	push ebx
+	push ecx
+	push edx
+	push esi
+	push edi
+
+	; Clear all book buffers first
+	mov edi, OFFSET BOOK_NAME_BUF
+	mov ecx, BOOK_NAME_SIZE
+	xor al, al
+dbl_clear_name:
+	mov [edi], al
+	inc edi
+	loop dbl_clear_name
+	
+	mov edi, OFFSET BOOK_AUTHOR_BUF
+	mov ecx, BOOK_AUTHOR_SIZE
+dbl_clear_author:
+	mov [edi], al
+	inc edi
+	loop dbl_clear_author
+	
+	mov edi, OFFSET BOOK_PUBLISHER_BUF
+	mov ecx, BOOK_PUBLISHER_SIZE
+dbl_clear_pub:
+	mov [edi], al
+	inc edi
+	loop dbl_clear_pub
+	
+	mov edi, OFFSET BOOK_GENRE_BUF
+	mov ecx, BOOK_GENRE_SIZE
+dbl_clear_genre:
+	mov [edi], al
+	inc edi
+	loop dbl_clear_genre
+	
+	mov edi, OFFSET BOOK_YEAR_BUF
+	mov ecx, 10
+dbl_clear_year:
+	mov [edi], al
+	inc edi
+	loop dbl_clear_year
+	
+	mov edi, OFFSET BOOK_ISBN_BUF
+	mov ecx, 20
+dbl_clear_isbn:
+	mov [edi], al
+	inc edi
+	loop dbl_clear_isbn
+
+	; Parse CSV line (EDX points to line)
+	mov esi, edx
+	
+	; Field 1 -> BOOK_NAME_BUF
+	mov edi, OFFSET BOOK_NAME_BUF
+dbl_copy_name:
+	mov al, [esi]
+	cmp al, ','
+	je dbl_name_done
+	cmp al, 0
+	je dbl_name_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp dbl_copy_name
+dbl_name_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne dbl_after_name
+	inc esi
+dbl_after_name:
+
+	; Field 2 -> BOOK_AUTHOR_BUF
+	mov edi, OFFSET BOOK_AUTHOR_BUF
+dbl_copy_author:
+	mov al, [esi]
+	cmp al, ','
+	je dbl_author_done
+	cmp al, 0
+	je dbl_author_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp dbl_copy_author
+dbl_author_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne dbl_after_author
+	inc esi
+dbl_after_author:
+
+	; Field 3 -> BOOK_PUBLISHER_BUF
+	mov edi, OFFSET BOOK_PUBLISHER_BUF
+dbl_copy_publisher:
+	mov al, [esi]
+	cmp al, ','
+	je dbl_publisher_done
+	cmp al, 0
+	je dbl_publisher_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp dbl_copy_publisher
+dbl_publisher_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne dbl_after_publisher
+	inc esi
+dbl_after_publisher:
+
+	; Field 4 -> BOOK_GENRE_BUF
+	mov edi, OFFSET BOOK_GENRE_BUF
+dbl_copy_genre:
+	mov al, [esi]
+	cmp al, ','
+	je dbl_genre_done
+	cmp al, 0
+	je dbl_genre_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp dbl_copy_genre
+dbl_genre_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne dbl_after_genre
+	inc esi
+dbl_after_genre:
+
+	; Field 5 -> BOOK_YEAR_BUF
+	mov edi, OFFSET BOOK_YEAR_BUF
+dbl_copy_year:
+	mov al, [esi]
+	cmp al, ','
+	je dbl_year_done
+	cmp al, 0
+	je dbl_year_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp dbl_copy_year
+dbl_year_done:
+	mov byte ptr [edi], 0
+	cmp byte ptr [esi], ','
+	jne dbl_after_year
+	inc esi
+dbl_after_year:
+
+	; Field 6 -> BOOK_ISBN_BUF
+	mov edi, OFFSET BOOK_ISBN_BUF
+dbl_copy_isbn:
+	mov al, [esi]
+	cmp al, 0
+	je dbl_isbn_done
+	mov [edi], al
+	inc edi
+	inc esi
+	jmp dbl_copy_isbn
+dbl_isbn_done:
+	mov byte ptr [edi], 0
+
+	; Display with labels
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR NAME_LABEL
+	mov edx, OFFSET BOOK_NAME_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR AUTHOR_LABEL
+	mov edx, OFFSET BOOK_AUTHOR_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR PUBLISHER_LABEL
+	mov edx, OFFSET BOOK_PUBLISHER_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR GENRE_LABEL
+	mov edx, OFFSET BOOK_GENRE_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR YEAR_LABEL
+	mov edx, OFFSET BOOK_YEAR_BUF
+	call WriteString
+	call CRLF
+
+	INVOKE MSG_DISPLAY, ADDR ISBN_LABEL
+	mov edx, OFFSET BOOK_ISBN_BUF
+	call WriteString
+	call CRLF
+
+	pop edi
+	pop esi
+	pop edx
+	pop ecx
+	pop ebx
+	pop eax
+	ret
+DisplayBookLine ENDP
+
 end main

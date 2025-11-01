@@ -21,5 +21,6 @@ Fallen Kingdoms,Leo Carter,Empyrean Books,Fantasy,2025,9781234567909
 The Forgotten Equation,Sophia Watts,Logic Tree,Science,2025,9781234567910
 Love in the Mist,Amy Fields,Wildrose House,Romance,2025,9781234567911
 The Eternal Flame,Nathan Scott,Blaze Publications,Fantasy,2025,9781234567912
-City of Glass,Morgan Ellis,Urban Books,Dystopian,2025,9781234567913
+Glass,Morgan Ellis,Urban Books,Dystopian,2025,9781234567913
 Parallel Hearts,Lucas Gray,Newlight Press,Romance,2025,9781234567914
+faizan,xyz,xyt,xyz,2024,1234567891234
