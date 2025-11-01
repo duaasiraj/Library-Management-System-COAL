@@ -18,7 +18,8 @@ msg1	 BYTE 0AH
 	BYTE    "3. Add Book", 0dh, 0ah
 	BYTE    "4. Display All Books", 0dh, 0ah
 	BYTE    "5. Display All Users", 0dh, 0ah
-	BYTE    "6. Logout", 0dh, 0ah
+	BYTE    "6. View Issued Books", 0dh, 0ah
+	BYTE    "7. Logout", 0dh, 0ah
 	BYTE    "Choose Your Option : ", 0
 	LIB_LOGIN_MSG BYTE 0AH, "Enter librarian code: ",0
 	INVALID_CODE_MSG BYTE 0AH, "Invalid code. Returning to top menu.",0dh,0ah,0
@@ -76,6 +77,20 @@ SIGNIN_PASS_MSG BYTE "Enter password: ",0
 INVALID_CRED_MSG BYTE 0Ah, "Invalid email or password.",0dh,0ah,0
 
 NO_BOOKS_MSG BYTE 0Ah, "No books found.",0Dh,0Ah,0
+OVERDUE_BOOKS_HEADER BYTE 0Ah, "========== OVERDUE BOOKS ==========",0dh,0ah,0
+NO_OVERDUE_MSG BYTE 0Ah, "No overdue books found.",0dh,0ah,0
+ISSUED_BOOKS_HEADER BYTE 0Ah, "========== ISSUED BOOKS ==========",0dh,0ah,0
+NO_ISSUED_MSG BYTE 0Ah, "No books are currently issued.",0dh,0ah,0
+OVERDUE_SEPARATOR BYTE "-----------------------------------",0dh,0ah,0
+USERNAME_LABEL BYTE "Username: ",0
+ISSUE_DATE_LABEL BYTE "Issue Date: ",0
+RETURN_DATE_LABEL BYTE "Return Date: ",0
+FINES_HEADER BYTE 0Ah, "========== CALCULATE FINES ==========",0dh,0ah,0
+DAYS_OVERDUE_LABEL BYTE "Days Overdue: ",0
+FINE_AMOUNT_LABEL BYTE "Fine Amount: Rs. ",0
+TOTAL_FINE_LABEL BYTE 0Ah, "Total Fines: Rs. ",0
+NO_FINES_MSG BYTE 0Ah, "No fine to collect for this book. Book not found or returned on time!",0dh,0ah,0
+FINE_RATE_MSG BYTE "(Fine rate: Rs. 10 per day)",0dh,0ah,0
 
 VALID_USER BYTE "faizan",0
 VALID_PASS BYTE "1234",0
@@ -108,6 +123,7 @@ EXIT_MSG	   BYTE 0AH,
 bool		   DWORD ?
 MEMBERS_FILE   BYTE "MEMBERS.txt",0
 BOOKS_FILE     BYTE "BOOKS.txt",0
+ISSUED_BOOKS_FILE BYTE "ISSUED_BOOKS.txt",0
 filehandle     DWORD ?
 BUFFER_SIZE = 5000
 buffer_mem   BYTE buffer_size DUP (?)
@@ -119,7 +135,8 @@ CALCULATE_FINES DWORD 2
 ADD_BOOK	 DWORD 3
 DISPLAY_BOOKS	 DWORD 4
 DISPLAY_USERS	 DWORD 5
-LIB_LOGOUT	 DWORD 6
+VIEW_ISSUED_BOOKS DWORD 6
+LIB_LOGOUT	 DWORD 7
 
 ; Member menu options
 SEARCH_BOOK	 DWORD 1
@@ -185,6 +202,33 @@ INVALID_ISBN_MSG BYTE "You must enter a valid 13 digit ISBN number.",0dh,0ah,0
 DUPLICATE_ISBN_MSG BYTE "That book already exists. Please check the ISBN number again.",0dh,0ah,0
 BOOK_ADDED_MSG BYTE "Book added successfully!",0dh,0ah,0
 
+; Issue/Return book messages
+ISSUE_BOOK_MSG BYTE 0Ah, "Issue Book",0dh,0ah, "Enter ISBN of book to issue: ",0
+RETURN_BOOK_MSG BYTE 0Ah, "Return Book",0dh,0ah, "Enter ISBN of book to return: ",0
+BOOK_NOT_FOUND_MSG BYTE "Book not found in library.",0dh,0ah,0
+BOOK_ISSUED_SUCCESS_MSG BYTE "Book issued successfully!",0dh,0ah,0
+BOOK_ALREADY_ISSUED_MSG BYTE "This book is already issued.",0dh,0ah,0
+BOOK_RETURNED_SUCCESS_MSG BYTE "Book returned successfully!",0dh,0ah,0
+BOOK_NOT_ISSUED_MSG BYTE "This book was not issued to any member.",0dh,0ah,0
+BOOK_LIMIT_REACHED_MSG BYTE "You have reached the maximum limit of 5 issued books.",0dh,0ah, "Please return a book before issuing a new one.",0dh,0ah,0
+
+; ISBN search buffer
+ISBN_SEARCH_BUF DB 20 DUP(?)
+
+; Date buffer for issue/return
+DATE_BUF DB 20 DUP(?)
+RETURN_DATE_BUF DB 20 DUP(?)
+ISSUED_BOOK_NAME_BUF DB 150 DUP(?)
+CURRENT_DATE_BUF DB 20 DUP(?)
+PARSED_RETURN_DATE_BUF DB 20 DUP(?)
+OVERDUE_USERNAME_BUF DB 20 DUP(?)
+OVERDUE_BOOKNAME_BUF DB 150 DUP(?)
+OVERDUE_ISBN_BUF DB 20 DUP(?)
+OVERDUE_ISSUE_DATE_BUF DB 20 DUP(?)
+DAYS_OVERDUE_BUF DB 10 DUP(?)
+FINE_AMOUNT_BUF DB 20 DUP(?)
+FINE_RATE DWORD 10  ; Rs. 10 per day fine
+
 ; ISBN validation constants
 ISBN_CHECK QWORD 1000000000000
 VALID_ISBN_MIN QWORD 1000000000000
@@ -229,6 +273,8 @@ SHOW_FULL_MENU:
 	JE VIEW_BFILE		; jump to Display All Books section (from file)
 	CMP EAX, DISPLAY_USERS
 	JE VIEW_MFILE		; jump to Display All Users section
+	CMP EAX, VIEW_ISSUED_BOOKS
+	JE VIEW_ISSUED_BOOKS_FUNC	; jump to View Issued Books section
 	CMP EAX, LIB_LOGOUT
 	JE START		; logout -> return to main menu
 	JMP SHOW_FULL_MENU	; invalid option -> show menu again
@@ -661,6 +707,187 @@ vm_loop_after_advance_file:
 
 vm_done_file:
 	JMP SHOW_FULL_MENU
+
+;----------------------------------
+;------VIEW ISSUED BOOKS-----------
+;----------------------------------
+VIEW_ISSUED_BOOKS_FUNC:
+	; Display issued books header
+	INVOKE MSG_DISPLAY, ADDR ISSUED_BOOKS_HEADER
+	
+	; Read ISSUED_BOOKS.txt
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je view_issued_no_books
+	
+	mov filehandle, eax
+	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
+	INVOKE CloseHandle, filehandle
+	
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je view_issued_no_books
+	
+	; Null-terminate buffer
+	mov edi, OFFSET buffer_mem
+	mov ecx, DWORD PTR bytesRead
+	mov byte ptr [edi + ecx], 0
+	
+	xor ebx, ebx  ; offset in buffer
+	xor esi, esi  ; counter for issued books
+	
+view_issued_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge view_issued_check_count
+	
+	lea edi, [OFFSET buffer_mem + ebx]
+	
+	; Find line length
+	xor ecx, ecx
+view_issued_find_eol:
+	mov al, [edi + ecx]
+	cmp al, 0
+	je view_issued_process_line
+	cmp al, 0Dh
+	je view_issued_process_line
+	inc ecx
+	jmp view_issued_find_eol
+	
+view_issued_process_line:
+	cmp ecx, 0
+	je view_issued_advance
+	
+	push ecx
+	push edi
+	
+	; Parse line: username,bookname,ISBN,issuedate,returndate
+	mov esi, edi
+	
+	; Field 1: Username
+	mov edi, OFFSET OVERDUE_USERNAME_BUF
+view_issued_extract_user:
+	mov al, [esi]
+	cmp al, ','
+	je view_issued_user_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp view_issued_extract_user
+view_issued_user_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 2: Book name
+	mov edi, OFFSET OVERDUE_BOOKNAME_BUF
+view_issued_extract_book:
+	mov al, [esi]
+	cmp al, ','
+	je view_issued_book_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp view_issued_extract_book
+view_issued_book_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 3: ISBN
+	mov edi, OFFSET OVERDUE_ISBN_BUF
+view_issued_extract_isbn:
+	mov al, [esi]
+	cmp al, ','
+	je view_issued_isbn_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp view_issued_extract_isbn
+view_issued_isbn_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 4: Issue date
+	mov edi, OFFSET OVERDUE_ISSUE_DATE_BUF
+view_issued_extract_issue:
+	mov al, [esi]
+	cmp al, ','
+	je view_issued_issue_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp view_issued_extract_issue
+view_issued_issue_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 5: Return date
+	mov edi, OFFSET PARSED_RETURN_DATE_BUF
+view_issued_extract_return:
+	mov al, [esi]
+	cmp al, 0
+	je view_issued_return_done
+	cmp al, 0Dh
+	je view_issued_return_done
+	cmp al, 0Ah
+	je view_issued_return_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp view_issued_extract_return
+view_issued_return_done:
+	mov byte ptr [edi], 0
+	
+	; Display issued book details
+	INVOKE MSG_DISPLAY, ADDR USERNAME_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_USERNAME_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR NAME_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_BOOKNAME_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR ISBN_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_ISBN_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR ISSUE_DATE_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_ISSUE_DATE_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR RETURN_DATE_LABEL
+	INVOKE MSG_DISPLAY, ADDR PARSED_RETURN_DATE_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_SEPARATOR
+	
+	inc esi  ; increment issued books counter
+	
+	pop edi
+	pop ecx
+	
+view_issued_advance:
+	add ebx, ecx
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
+	jne view_issued_skip_lf
+	inc ebx
+view_issued_skip_lf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
+	jne view_issued_next_line
+	inc ebx
+view_issued_next_line:
+	jmp view_issued_loop
+	
+view_issued_check_count:
+	; Check if any issued books found
+	cmp esi, 0
+	jne view_issued_done
+	
+view_issued_no_books:
+	INVOKE MSG_DISPLAY, ADDR NO_ISSUED_MSG
+	
+view_issued_done:
+	JMP SHOW_FULL_MENU
+
 ;----------------------------------
 ;--------------ADD BOOKS-----------
 ;----------------------------------	
@@ -1074,15 +1301,760 @@ vb_done:
 
 ; Librarian menu functions (placeholders)
 VIEW_OVERDUE_FUNC:
-	; TODO: Implement view overdue books functionality
+	; Display overdue books header
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_BOOKS_HEADER
+	
+	; Get current date
+	push eax
+	push ebx
+	push ecx
+	push edx
+	
+	sub esp, 16
+	mov esi, esp
+	INVOKE GetLocalTime, esi
+	
+	; Extract day, month, year
+	movzx eax, WORD PTR [esi+2]  ; wMonth
+	movzx ebx, WORD PTR [esi+6]  ; wDay
+	movzx ecx, WORD PTR [esi]    ; wYear
+	add esp, 16
+	
+	; Store current date values for comparison
+	; Convert to comparable format: YYYYMMDD
+	; Current date = year*10000 + month*100 + day
+	push eax  ; save month
+	mov eax, ecx  ; year
+	mov edx, 10000
+	mul edx
+	mov ecx, eax  ; ecx = year * 10000
+	pop eax       ; restore month
+	push ebx      ; save day
+	mov edx, 100
+	mul edx
+	add ecx, eax  ; ecx += month * 100
+	pop eax       ; get day
+	add ecx, eax  ; ecx += day
+	; Now ecx contains current date as YYYYMMDD
+	push ecx      ; save current date
+	
+	; Read ISSUED_BOOKS.txt
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je overdue_no_books
+	
+	mov filehandle, eax
+	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
+	INVOKE CloseHandle, filehandle
+	
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je overdue_no_books
+	
+	; Null-terminate buffer
+	mov edi, OFFSET buffer_mem
+	mov ecx, DWORD PTR bytesRead
+	mov byte ptr [edi + ecx], 0
+	
+	xor ebx, ebx  ; offset in buffer
+	xor esi, esi  ; counter for overdue books
+	
+overdue_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge overdue_check_count
+	
+	lea edi, [OFFSET buffer_mem + ebx]
+	
+	; Find line length
+	xor ecx, ecx
+overdue_find_eol:
+	mov al, [edi + ecx]
+	cmp al, 0
+	je overdue_process_line
+	cmp al, 0Dh
+	je overdue_process_line
+	inc ecx
+	jmp overdue_find_eol
+	
+overdue_process_line:
+	cmp ecx, 0
+	je overdue_advance
+	
+	push ecx
+	push edi
+	
+	; Parse line: username,bookname,ISBN,issuedate,returndate
+	; Extract return date (5th field)
+	mov esi, edi
+	xor edx, edx  ; comma counter
+	
+overdue_skip_to_return_date:
+	mov al, [esi]
+	cmp al, 0
+	je overdue_line_done
+	cmp al, 0Dh
+	je overdue_line_done
+	cmp al, ','
+	jne overdue_skip_char
+	inc edx
+	cmp edx, 4
+	je overdue_found_return_date
+overdue_skip_char:
+	inc esi
+	jmp overdue_skip_to_return_date
+	
+overdue_found_return_date:
+	; Skip comma
+	inc esi
+	
+	; Copy return date to PARSED_RETURN_DATE_BUF
+	push edi
+	mov edi, OFFSET PARSED_RETURN_DATE_BUF
+overdue_copy_date:
+	mov al, [esi]
+	cmp al, 0
+	je overdue_date_copied
+	cmp al, 0Dh
+	je overdue_date_copied
+	cmp al, 0Ah
+	je overdue_date_copied
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp overdue_copy_date
+	
+overdue_date_copied:
+	mov byte ptr [edi], 0
+	pop edi
+	
+	; Parse return date DD/MM/YYYY and convert to YYYYMMDD
+	push edi
+	mov esi, OFFSET PARSED_RETURN_DATE_BUF
+	
+	; Extract day (first 2 chars)
+	movzx eax, byte ptr [esi]
+	sub al, '0'
+	mov bl, 10
+	mul bl
+	movzx edx, byte ptr [esi+1]
+	sub dl, '0'
+	add al, dl
+	movzx eax, al
+	push eax  ; save day
+	
+	; Extract month (chars 3-4, after '/')
+	movzx eax, byte ptr [esi+3]
+	sub al, '0'
+	mov bl, 10
+	mul bl
+	movzx edx, byte ptr [esi+4]
+	sub dl, '0'
+	add al, dl
+	movzx eax, al
+	push eax  ; save month
+	
+	; Extract year (chars 6-9, after second '/')
+	movzx eax, byte ptr [esi+6]
+	sub al, '0'
+	mov dx, 1000
+	mul dx
+	movzx ecx, ax
+	
+	movzx eax, byte ptr [esi+7]
+	sub al, '0'
+	mov dx, 100
+	mul dx
+	add ecx, eax
+	
+	movzx eax, byte ptr [esi+8]
+	sub al, '0'
+	mov dx, 10
+	mul dx
+	add ecx, eax
+	
+	movzx eax, byte ptr [esi+9]
+	sub al, '0'
+	add ecx, eax
+	
+	; Now ecx = year, calculate YYYYMMDD
+	mov eax, ecx
+	mov edx, 10000
+	mul edx
+	mov ecx, eax  ; ecx = year * 10000
+	
+	pop eax  ; get month
+	mov edx, 100
+	mul edx
+	add ecx, eax  ; ecx += month * 100
+	
+	pop eax  ; get day
+	add ecx, eax  ; ecx += day
+	
+	pop edi
+	
+	; Compare with current date
+	mov eax, [esp+8]  ; get current date from stack
+	cmp ecx, eax
+	jge overdue_line_done  ; return date >= current date, not overdue
+	
+	; Book is overdue! Extract and display details
+	pop edi
+	pop ecx
+	push ecx
+	push edi
+	
+	; Extract all fields from line
+	mov esi, edi
+	
+	; Field 1: Username
+	mov edi, OFFSET OVERDUE_USERNAME_BUF
+overdue_extract_user:
+	mov al, [esi]
+	cmp al, ','
+	je overdue_user_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp overdue_extract_user
+overdue_user_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 2: Book name
+	mov edi, OFFSET OVERDUE_BOOKNAME_BUF
+overdue_extract_book:
+	mov al, [esi]
+	cmp al, ','
+	je overdue_book_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp overdue_extract_book
+overdue_book_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 3: ISBN
+	mov edi, OFFSET OVERDUE_ISBN_BUF
+overdue_extract_isbn:
+	mov al, [esi]
+	cmp al, ','
+	je overdue_isbn_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp overdue_extract_isbn
+overdue_isbn_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 4: Issue date
+	mov edi, OFFSET OVERDUE_ISSUE_DATE_BUF
+overdue_extract_issue:
+	mov al, [esi]
+	cmp al, ','
+	je overdue_issue_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp overdue_extract_issue
+overdue_issue_done:
+	mov byte ptr [edi], 0
+	
+	; Display overdue book details
+	INVOKE MSG_DISPLAY, ADDR USERNAME_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_USERNAME_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR NAME_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_BOOKNAME_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR ISBN_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_ISBN_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR ISSUE_DATE_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_ISSUE_DATE_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR RETURN_DATE_LABEL
+	INVOKE MSG_DISPLAY, ADDR PARSED_RETURN_DATE_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_SEPARATOR
+	
+	inc DWORD PTR [esp+8+4]  ; increment overdue counter (accounting for pushes)
+	
+overdue_line_done:
+	pop edi
+	pop ecx
+	
+overdue_advance:
+	add ebx, ecx
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
+	jne overdue_skip_lf
+	inc ebx
+overdue_skip_lf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
+	jne overdue_next_line
+	inc ebx
+overdue_next_line:
+	jmp overdue_loop
+	
+overdue_check_count:
+	; Clean up stack (current date)
+	pop ecx
+	
+	; Check if any overdue books found
+	cmp esi, 0
+	jne overdue_done
+	
+overdue_no_books:
+	INVOKE MSG_DISPLAY, ADDR NO_OVERDUE_MSG
+	
+overdue_done:
+	pop edx
+	pop ecx
+	pop ebx
+	pop eax
 	JMP SHOW_FULL_MENU
 
 CALCULATE_FINES_FUNC:
-	; TODO: Implement calculate fines functionality
+	; Ask user to enter ISBN
+	INVOKE MSG_DISPLAY, ADDR ISBN_PROMPT
+	mov edx, OFFSET ISBN_SEARCH_BUF
+	mov ecx, 20
+	CALL READSTRING
+	
+	; Display fines header
+	INVOKE MSG_DISPLAY, ADDR FINES_HEADER
+	INVOKE MSG_DISPLAY, ADDR FINE_RATE_MSG
+	
+	; Get current date
+	push eax
+	push ebx
+	push ecx
+	push edx
+	
+	sub esp, 16
+	mov esi, esp
+	INVOKE GetLocalTime, esi
+	
+	; Extract day, month, year
+	movzx eax, WORD PTR [esi+2]  ; wMonth
+	movzx ebx, WORD PTR [esi+6]  ; wDay
+	movzx ecx, WORD PTR [esi]    ; wYear
+	add esp, 16
+	
+	; Store current date values for comparison
+	; Convert to comparable format: YYYYMMDD
+	push eax  ; save month
+	mov eax, ecx  ; year
+	mov edx, 10000
+	mul edx
+	mov ecx, eax  ; ecx = year * 10000
+	pop eax       ; restore month
+	push ebx      ; save day
+	mov edx, 100
+	mul edx
+	add ecx, eax  ; ecx += month * 100
+	pop eax       ; get day
+	add ecx, eax  ; ecx += day
+	; Now ecx contains current date as YYYYMMDD
+	push ecx      ; save current date
+	
+	; Store individual date components for day calculation
+	sub esp, 16
+	mov esi, esp
+	INVOKE GetLocalTime, esi
+	movzx eax, WORD PTR [esi+2]  ; wMonth
+	movzx ebx, WORD PTR [esi+6]  ; wDay
+	movzx ecx, WORD PTR [esi]    ; wYear
+	add esp, 16
+	
+	push ecx  ; current year
+	push eax  ; current month
+	push ebx  ; current day
+	
+	; Read ISSUED_BOOKS.txt
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je fines_no_books
+	
+	mov filehandle, eax
+	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
+	INVOKE CloseHandle, filehandle
+	
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je fines_no_books
+	
+	; Null-terminate buffer
+	mov edi, OFFSET buffer_mem
+	mov ecx, DWORD PTR bytesRead
+	mov byte ptr [edi + ecx], 0
+	
+	xor ebx, ebx  ; offset in buffer
+	xor esi, esi  ; total fine amount
+	
+fines_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge fines_check_total
+	
+	lea edi, [OFFSET buffer_mem + ebx]
+	
+	; Find line length
+	xor ecx, ecx
+fines_find_eol:
+	mov al, [edi + ecx]
+	cmp al, 0
+	je fines_process_line
+	cmp al, 0Dh
+	je fines_process_line
+	inc ecx
+	jmp fines_find_eol
+	
+fines_process_line:
+	cmp ecx, 0
+	je fines_advance
+	
+	push ecx
+	push edi
+	
+	; Parse line: username,bookname,ISBN,issuedate,returndate
+	; First check if ISBN matches the searched ISBN
+	mov esi, edi
+	xor edx, edx  ; comma counter
+	
+fines_skip_to_isbn:
+	mov al, [esi]
+	cmp al, 0
+	je fines_line_done
+	cmp al, 0Dh
+	je fines_line_done
+	cmp al, ','
+	jne fines_skip_isbn_char
+	inc edx
+	cmp edx, 2
+	je fines_found_isbn_field
+fines_skip_isbn_char:
+	inc esi
+	jmp fines_skip_to_isbn
+	
+fines_found_isbn_field:
+	; Skip comma
+	inc esi
+	
+	; Compare ISBN with search buffer
+	push edi
+	mov edi, OFFSET ISBN_SEARCH_BUF
+fines_compare_isbn:
+	mov al, [esi]
+	mov bl, [edi]
+	cmp bl, 0
+	je fines_check_isbn_end
+	cmp al, bl
+	jne fines_isbn_no_match
+	inc esi
+	inc edi
+	jmp fines_compare_isbn
+	
+fines_check_isbn_end:
+	mov al, [esi]
+	cmp al, ','
+	je fines_isbn_match
+	
+fines_isbn_no_match:
+	pop edi
+	jmp fines_line_done
+	
+fines_isbn_match:
+	pop edi
+	
+	; Now extract return date (5th field)
+	mov esi, edi
+	xor edx, edx  ; comma counter
+	
+fines_skip_to_return_date:
+	mov al, [esi]
+	cmp al, 0
+	je fines_line_done
+	cmp al, 0Dh
+	je fines_line_done
+	cmp al, ','
+	jne fines_skip_char
+	inc edx
+	cmp edx, 4
+	je fines_found_return_date
+fines_skip_char:
+	inc esi
+	jmp fines_skip_to_return_date
+	
+fines_found_return_date:
+	; Skip comma
+	inc esi
+	
+	; Copy return date to PARSED_RETURN_DATE_BUF
+	push edi
+	mov edi, OFFSET PARSED_RETURN_DATE_BUF
+fines_copy_date:
+	mov al, [esi]
+	cmp al, 0
+	je fines_date_copied
+	cmp al, 0Dh
+	je fines_date_copied
+	cmp al, 0Ah
+	je fines_date_copied
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp fines_copy_date
+	
+fines_date_copied:
+	mov byte ptr [edi], 0
+	pop edi
+	
+	; Parse return date DD/MM/YYYY and convert to YYYYMMDD
+	push edi
+	mov esi, OFFSET PARSED_RETURN_DATE_BUF
+	
+	; Extract day
+	movzx eax, byte ptr [esi]
+	sub al, '0'
+	mov bl, 10
+	mul bl
+	movzx edx, byte ptr [esi+1]
+	sub dl, '0'
+	add al, dl
+	movzx eax, al
+	push eax  ; save return day
+	
+	; Extract month
+	movzx eax, byte ptr [esi+3]
+	sub al, '0'
+	mov bl, 10
+	mul bl
+	movzx edx, byte ptr [esi+4]
+	sub dl, '0'
+	add al, dl
+	movzx eax, al
+	push eax  ; save return month
+	
+	; Extract year
+	movzx eax, byte ptr [esi+6]
+	sub al, '0'
+	mov dx, 1000
+	mul dx
+	movzx ecx, ax
+	
+	movzx eax, byte ptr [esi+7]
+	sub al, '0'
+	mov dx, 100
+	mul dx
+	add ecx, eax
+	
+	movzx eax, byte ptr [esi+8]
+	sub al, '0'
+	mov dx, 10
+	mul dx
+	add ecx, eax
+	
+	movzx eax, byte ptr [esi+9]
+	sub al, '0'
+	add ecx, eax
+	
+	; Now ecx = year, calculate YYYYMMDD
+	mov eax, ecx
+	mov edx, 10000
+	mul edx
+	mov ecx, eax  ; ecx = year * 10000
+	
+	pop eax  ; get return month
+	mov edx, 100
+	mul edx
+	add ecx, eax  ; ecx += month * 100
+	
+	pop eax  ; get return day
+	add ecx, eax  ; ecx += day
+	
+	pop edi
+	
+	; Compare with current date
+	mov eax, [esp+8+12]  ; get current date from stack (accounting for 3 date component pushes)
+	cmp ecx, eax
+	jge fines_line_done  ; return date >= current date, not overdue
+	
+	; Book is overdue! Calculate days overdue and fine
+	; Simple calculation: currentDate - returnDate (approximation)
+	mov eax, [esp+8+12]  ; current date YYYYMMDD
+	sub eax, ecx         ; subtract return date
+	; Approximate days (this is simplified - actual would need proper date arithmetic)
+	; For simplicity: assume difference in dates gives rough day count
+	; Better approach: use individual components
+	
+	; Get return date components back from string
+	mov esi, OFFSET PARSED_RETURN_DATE_BUF
+	movzx ebx, byte ptr [esi]
+	sub bl, '0'
+	mov al, 10
+	mul bl
+	movzx edx, byte ptr [esi+1]
+	sub dl, '0'
+	add al, dl
+	movzx ebx, al  ; ebx = return day
+	
+	movzx eax, byte ptr [esi+3]
+	sub al, '0'
+	mov dl, 10
+	mul dl
+	movzx ecx, byte ptr [esi+4]
+	sub cl, '0'
+	add al, cl
+	movzx ecx, al  ; ecx = return month
+	
+	; Get current date components from stack
+	mov eax, [esp+8]    ; current day
+	mov edx, [esp+8+4]  ; current month
+	
+	; Simple day calculation (assuming same month for simplicity)
+	; In reality, need complex date arithmetic
+	; For demo: if same month, days = current_day - return_day
+	cmp edx, ecx
+	jne fines_diff_month
+	
+	sub eax, ebx  ; days overdue = current_day - return_day
+	jmp fines_calc_fine
+	
+fines_diff_month:
+	; Simplified: add 30 days for month difference
+	mov eax, 30
+	sub eax, ebx  ; days left in return month
+	add eax, [esp+8]  ; add days in current month
+	
+fines_calc_fine:
+	; eax now has days overdue
+	cmp eax, 0
+	jle fines_line_done  ; skip if not actually overdue
+	
+	; Calculate fine: days * rate
+	mov edx, FINE_RATE
+	mul edx  ; eax = days * rate
+	
+	; Save fine for this book
+	push eax  ; save fine amount
+	
+	; Extract book details
+	pop edx  ; get fine back
+	pop edi
+	pop ecx
+	push ecx
+	push edi
+	push edx  ; save fine again
+	
+	mov esi, edi
+	
+	; Field 1: Username
+	mov edi, OFFSET OVERDUE_USERNAME_BUF
+fines_extract_user:
+	mov al, [esi]
+	cmp al, ','
+	je fines_user_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp fines_extract_user
+fines_user_done:
+	mov byte ptr [edi], 0
+	inc esi
+	
+	; Field 2: Book name
+	mov edi, OFFSET OVERDUE_BOOKNAME_BUF
+fines_extract_book:
+	mov al, [esi]
+	cmp al, ','
+	je fines_book_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp fines_extract_book
+fines_book_done:
+	mov byte ptr [edi], 0
+	
+	; Display details with fine
+	INVOKE MSG_DISPLAY, ADDR USERNAME_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_USERNAME_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR NAME_LABEL
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_BOOKNAME_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR RETURN_DATE_LABEL
+	INVOKE MSG_DISPLAY, ADDR PARSED_RETURN_DATE_BUF
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR FINE_AMOUNT_LABEL
+	pop eax  ; get fine amount
+	call WriteDec
+	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	
+	INVOKE MSG_DISPLAY, ADDR OVERDUE_SEPARATOR
+	
+	; Book found and fine calculated, exit
+	pop edi
+	pop ecx
+	
+	; Clean up stack (current day, month, year, current date)
+	pop ebx  ; day
+	pop ecx  ; month
+	pop edx  ; year
+	pop eax  ; current date
+	
+	jmp fines_done
+	
+fines_line_done:
+	pop edi
+	pop ecx
+	
+fines_advance:
+	add ebx, ecx
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
+	jne fines_skip_lf
+	inc ebx
+fines_skip_lf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
+	jne fines_next_line
+	inc ebx
+fines_next_line:
+	jmp fines_loop
+	
+fines_check_total:
+	; Clean up stack (current day, month, year, current date)
+	pop ebx  ; day
+	pop ecx  ; month
+	pop edx  ; year
+	pop eax  ; current date
+	
+	; Check if any fines calculated
+	cmp esi, 0
+	je fines_no_books
+	
+	; No total display needed
+	jmp fines_done
+	
+fines_no_books:
+	; Clean up stack if we jumped here
+	add esp, 16  ; clean up date components and current date
+	INVOKE MSG_DISPLAY, ADDR NO_FINES_MSG
+	
+fines_done:
+	pop edx
+	pop ecx
+	pop ebx
+	pop eax
 	JMP SHOW_FULL_MENU
 
 ; Member menu functions
@@ -1104,15 +2076,848 @@ SEARCH_BOOK_FUNC:
 	JMP SEARCH_BOOK_FUNC	; invalid option -> show search menu again
 
 ISSUE_BOOK_FUNC:
-	; TODO: Implement issue book functionality
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	; First, check if user has already issued 5 books
+	; Read ISSUED_BOOKS.txt and count books issued by current user
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je issue_check_done ; File doesn't exist, no books issued yet
+	
+	mov filehandle, eax
+	
+	; Read all issued books into buffer_mem
+	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
+	INVOKE CloseHandle, filehandle
+	
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je issue_check_done ; No books issued yet
+	
+	; Null-terminate buffer
+	mov edi, OFFSET buffer_mem
+	mov ecx, DWORD PTR bytesRead
+	mov byte ptr [edi + ecx], 0
+	
+	; Count books issued by current user
+	xor ebx, ebx ; offset in buffer
+	xor esi, esi ; counter for user's books
+	
+issue_count_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge issue_check_limit
+	
+	lea edi, [OFFSET buffer_mem + ebx]
+	
+	; Find line length
+	xor ecx, ecx
+issue_count_eol:
+	mov al, [edi + ecx]
+	cmp al, 0
+	je issue_count_process
+	cmp al, 0Dh
+	je issue_count_process
+	inc ecx
+	jmp issue_count_eol
+	
+issue_count_process:
+	cmp ecx, 0
+	je issue_count_advance
+	
+	; Extract username (first field) and compare with USERNAME_BUF
+	push ecx
+	push edi
+	push esi
+	
+	; Copy username from line to TEMP_FIELD
+	mov esi, edi
+	mov edi, OFFSET TEMP_FIELD
+issue_count_copy_user:
+	mov al, [esi]
+	cmp al, ','
+	je issue_count_compare_user
+	cmp al, 0
+	je issue_count_compare_user
+	cmp al, 0Dh
+	je issue_count_compare_user
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp issue_count_copy_user
+	
+issue_count_compare_user:
+	mov byte ptr [edi], 0
+	
+	; Compare with USERNAME_BUF
+	INVOKE Str_compare, ADDR USERNAME_BUF, ADDR TEMP_FIELD
+	pop esi
+	pop edi
+	pop ecx
+	jne issue_count_advance
+	
+	; Username matches, increment counter
+	inc esi
+	
+issue_count_advance:
+	add ebx, ecx
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
+	jne issue_count_lf
+	inc ebx
+issue_count_lf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
+	jne issue_count_next
+	inc ebx
+issue_count_next:
+	jmp issue_count_loop
+	
+issue_check_limit:
+	; Check if user has 5 or more books
+	cmp esi, 5
+	jge issue_limit_reached
+	
+issue_check_done:
+	; User has less than 5 books, proceed with issuing
+	
+	; Prompt for ISBN
+	INVOKE MSG_DISPLAY, ADDR ISSUE_BOOK_MSG
+	mov edx, OFFSET ISBN_SEARCH_BUF
+	mov ecx, 20
+	CALL READSTRING
+	
+	; First check if book exists in BOOKS.txt
+	INVOKE CreateFile, ADDR BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+	mov filehandle, eax
+	cmp eax, INVALID_HANDLE_VALUE
+	je issue_book_not_found
+	
+	CALL ReadAllBooks
+	INVOKE CloseHandle, filehandle
+	
+	; Search for ISBN in BUFFER_BOOK (field 6)
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je issue_book_not_found
+	
+	xor ebx, ebx ; offset in buffer
+	mov edi, OFFSET TEMP_FIELD
+	mov byte ptr [edi], 0 ; flag for found
+	
+issue_search_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge issue_book_not_found
+	
+	lea edi, [OFFSET BUFFER_BOOK + ebx]
+	
+	; Find line length
+	xor ecx, ecx
+issue_find_eol:
+	mov al, [edi + ecx]
+	cmp al, 0
+	je issue_process_line
+	cmp al, 0Dh
+	je issue_process_line
+	inc ecx
+	jmp issue_find_eol
+	
+issue_process_line:
+	cmp ecx, 0
+	je issue_advance_empty
+	
+	; Extract ISBN (6th field) - skip 5 commas
+	push ecx
+	push edi
+	
+	mov esi, edi
+	xor edx, edx ; field counter
+	xor ecx, ecx ; position in line
+	
+issue_find_isbn_field:
+	mov al, [esi]
+	cmp al, 0
+	je issue_extract_isbn
+	cmp al, 0Dh
+	je issue_extract_isbn
+	cmp al, ','
+	jne issue_skip_char
+	inc edx
+	cmp edx, 5
+	je issue_extract_isbn
+issue_skip_char:
+	inc esi
+	jmp issue_find_isbn_field
+	
+issue_extract_isbn:
+	; Skip the last comma if we found 5
+	cmp edx, 5
+	jne issue_line_done
+	cmp byte ptr [esi], ','
+	jne issue_start_copy
+	inc esi
+	
+issue_start_copy:
+	; Copy ISBN to TEMP_FIELD
+	mov edi, OFFSET TEMP_FIELD
+issue_copy_isbn:
+	mov al, [esi]
+	cmp al, 0
+	je issue_compare
+	cmp al, 0Dh
+	je issue_compare
+	cmp al, 0Ah
+	je issue_compare
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp issue_copy_isbn
+	
+issue_compare:
+	mov byte ptr [edi], 0
+	
+	; Compare with ISBN_SEARCH_BUF
+	INVOKE Str_compare, ADDR ISBN_SEARCH_BUF, ADDR TEMP_FIELD
+	je issue_book_found
+	
+issue_line_done:
+	pop edi
+	pop ecx
+	
+issue_advance:
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne issue_skip_lf
+	inc ebx
+issue_skip_lf:
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne issue_next_line
+	inc ebx
+issue_next_line:
+	jmp issue_search_loop
+
+issue_advance_empty:
+	xor ecx, ecx
+	jmp issue_advance
+	
+issue_book_found:
+	pop edi
+	pop ecx
+	
+	; First, extract book name from the matched line (edi points to start of line)
+	; Save edi (line start) for later use
+	push edi
+	
+	; Copy book name (first field) to ISSUED_BOOK_NAME_BUF
+	mov esi, edi
+	mov edi, OFFSET ISSUED_BOOK_NAME_BUF
+issue_extract_name:
+	mov al, [esi]
+	cmp al, ','
+	je issue_name_done
+	cmp al, 0
+	je issue_name_done
+	cmp al, 0Dh
+	je issue_name_done
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp issue_extract_name
+issue_name_done:
+	mov byte ptr [edi], 0
+	
+	; Restore edi
+	pop edi
+	
+	; Check if already issued by reading ISSUED_BOOKS.txt
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je issue_not_yet_issued ; File doesn't exist, so no books issued yet
+	
+	mov filehandle, eax
+	
+	; Read issued books into buffer_mem
+	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
+	INVOKE CloseHandle, filehandle
+	
+	; Search for ISBN in issued books
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je issue_not_yet_issued
+	
+	; Null-terminate buffer
+	mov edi, OFFSET buffer_mem
+	mov ecx, DWORD PTR bytesRead
+	mov byte ptr [edi + ecx], 0
+	
+	xor ebx, ebx
+issue_check_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge issue_not_yet_issued
+	
+	lea esi, [OFFSET buffer_mem + ebx]
+	
+	; Find line length
+	xor ecx, ecx
+issue_check_eol:
+	mov al, [esi + ecx]
+	cmp al, 0
+	je issue_check_isbn
+	cmp al, 0Dh
+	je issue_check_isbn
+	inc ecx
+	jmp issue_check_eol
+	
+issue_check_isbn:
+	cmp ecx, 0
+	je issue_check_advance
+	
+	; Extract ISBN (3rd field) from issued books line: username,bookname,ISBN,issuedate,returndate
+	push ecx
+	push esi
+	
+	; Skip first two fields (username, bookname)
+	xor edx, edx ; comma counter
+issue_skip_to_isbn:
+	mov al, [esi]
+	cmp al, 0
+	je issue_check_no_match
+	cmp al, 0Dh
+	je issue_check_no_match
+	cmp al, ','
+	jne issue_skip_next_char
+	inc edx
+	cmp edx, 2
+	je issue_found_isbn_field
+issue_skip_next_char:
+	inc esi
+	jmp issue_skip_to_isbn
+	
+issue_found_isbn_field:
+	; Skip the comma
+	inc esi
+	
+	; Copy ISBN to TEMP_FIELD
+	mov edi, OFFSET TEMP_FIELD
+issue_copy_issued_isbn:
+	mov al, [esi]
+	cmp al, 0
+	je issue_check_compare
+	cmp al, 0Dh
+	je issue_check_compare
+	cmp al, ','
+	je issue_check_compare
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp issue_copy_issued_isbn
+	
+issue_check_compare:
+	mov byte ptr [edi], 0
+	
+	; Check if ISBN matches
+	INVOKE Str_compare, ADDR ISBN_SEARCH_BUF, ADDR TEMP_FIELD
+	je issue_already_issued_pop
+
+issue_check_no_match:
+	pop esi
+	pop ecx
+	
+issue_check_advance:
+	add ebx, ecx
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
+	jne issue_check_lf
+	inc ebx
+issue_check_lf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
+	jne issue_check_next
+	inc ebx
+issue_check_next:
+	jmp issue_check_loop
+	
+issue_already_issued_pop:
+	pop esi
+	pop ecx
+	INVOKE MSG_DISPLAY, ADDR BOOK_ALREADY_ISSUED_MSG
+	JMP SHOW_MEMBER_MENU
+	
+issue_not_yet_issued:
+	; Book exists and not issued - add to ISSUED_BOOKS.txt
+	; Format: username,bookname,ISBN,date
+	
+	; Get current date using GetLocalTime
+	push eax
+	push ebx
+	push ecx
+	push edx
+	
+	; Allocate SYSTEMTIME structure on stack (16 bytes)
+	sub esp, 16
+	mov esi, esp
+	
+	INVOKE GetLocalTime, esi
+	
+	; Extract day, month, year from SYSTEMTIME structure
+	; SYSTEMTIME: wYear(2), wMonth(2), wDayOfWeek(2), wDay(2), wHour(2), wMinute(2), wSecond(2), wMilliseconds(2)
+	movzx eax, WORD PTR [esi+2]  ; wMonth (offset 2)
+	movzx ebx, WORD PTR [esi+6]  ; wDay (offset 6)
+	movzx ecx, WORD PTR [esi]    ; wYear (offset 0)
+	
+	; Clean up stack
+	add esp, 16
+	
+	; Save the values we need
+	push ecx  ; save year
+	push eax  ; save month
+	push ebx  ; save day
+	
+	; Format date as "DD/MM/YYYY" in DATE_BUF
+	mov edi, OFFSET DATE_BUF
+	
+	; Day (2 digits)
+	pop eax   ; get day
+	push eax  ; save it again
+	xor edx, edx
+	push ecx  ; save ecx
+	mov ecx, 10
+	div ecx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	mov al, dl
+	add al, '0'
+	mov [edi], al
+	inc edi
+	pop ecx   ; restore ecx
+	
+	; Separator
+	mov byte ptr [edi], '/'
+	inc edi
+	
+	; Month (2 digits)
+	mov eax, [esp+4]  ; get month (skip day on stack)
+	xor edx, edx
+	push ecx  ; save ecx
+	mov ecx, 10
+	div ecx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	mov al, dl
+	add al, '0'
+	mov [edi], al
+	inc edi
+	pop ecx   ; restore ecx
+	
+	; Separator
+	mov byte ptr [edi], '/'
+	inc edi
+	
+	; Year (4 digits)
+	mov eax, [esp+8]  ; get year from stack
+	push ebx
+	mov ebx, 1000
+	xor edx, edx
+	div ebx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov eax, edx
+	mov ebx, 100
+	xor edx, edx
+	div ebx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov eax, edx
+	mov ebx, 10
+	xor edx, edx
+	div ebx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov al, dl
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov byte ptr [edi], 0
+	pop ebx
+	
+	; Clean up stack but save day, month, year for return date calculation
+	; Stack has: day, month, year
+	pop eax  ; day
+	pop ebx  ; month
+	pop ecx  ; year
+	
+	; Calculate return date (10 days later)
+	; Add 10 to the day
+	add eax, 10
+	
+	; Save registers
+	push edx
+	
+	; Check if day exceeds month's max days
+	; Simple logic: assume 30 days per month for simplicity
+	cmp eax, 30
+	jle return_date_ok
+	
+	; Day exceeds 30, move to next month
+	sub eax, 30
+	inc ebx
+	
+	; Check if month exceeds 12
+	cmp ebx, 12
+	jle return_date_ok
+	
+	; Month exceeds 12, move to next year
+	sub ebx, 12
+	inc ecx
+	
+return_date_ok:
+	; Now eax=day, ebx=month, ecx=year for return date
+	; Format return date as "DD/MM/YYYY" in RETURN_DATE_BUF
+	
+	mov edi, OFFSET RETURN_DATE_BUF
+	
+	; Day (2 digits) - eax has day
+	push eax
+	push ebx
+	push ecx
+	xor edx, edx
+	mov ecx, 10
+	div ecx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	mov al, dl
+	add al, '0'
+	mov [edi], al
+	inc edi
+	pop ecx
+	pop ebx
+	pop eax
+	
+	; Separator
+	mov byte ptr [edi], '/'
+	inc edi
+	
+	; Month (2 digits) - ebx has month
+	push eax
+	push ebx
+	push ecx
+	mov eax, ebx
+	xor edx, edx
+	mov ecx, 10
+	div ecx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	mov al, dl
+	add al, '0'
+	mov [edi], al
+	inc edi
+	pop ecx
+	pop ebx
+	pop eax
+	
+	; Separator
+	mov byte ptr [edi], '/'
+	inc edi
+	
+	; Year (4 digits) - ecx has year
+	push eax
+	push ebx
+	mov eax, ecx
+	push ebx
+	mov ebx, 1000
+	xor edx, edx
+	div ebx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov eax, edx
+	mov ebx, 100
+	xor edx, edx
+	div ebx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov eax, edx
+	mov ebx, 10
+	xor edx, edx
+	div ebx
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov al, dl
+	add al, '0'
+	mov [edi], al
+	inc edi
+	
+	mov byte ptr [edi], 0
+	pop ebx
+	pop ebx
+	pop eax
+	
+	pop edx
+	
+	pop edx
+	pop ecx
+	pop ebx
+	pop eax
+	
+	; Now write to file: username,bookname,ISBN,issuedate,returndate
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_WRITE, DO_NOT_SHARE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
+	mov filehandle, eax
+	
+	; Move to end of file
+	INVOKE SetFilePointer, filehandle, 0, 0, FILE_END
+	
+	; Write username
+	mov edx, OFFSET USERNAME_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write book name
+	mov edx, OFFSET ISSUED_BOOK_NAME_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write ISBN
+	mov edx, OFFSET ISBN_SEARCH_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write issue date
+	mov edx, OFFSET DATE_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write return date
+	mov edx, OFFSET RETURN_DATE_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write newline
+	mov eax, filehandle
+	mov edx, OFFSET CRLF_BYTES
+	mov ecx, 2
+	call WriteToFile
+	
+	INVOKE CloseHandle, filehandle
+	
+	INVOKE MSG_DISPLAY, ADDR BOOK_ISSUED_SUCCESS_MSG
+	JMP SHOW_MEMBER_MENU
+	
+issue_limit_reached:
+	INVOKE MSG_DISPLAY, ADDR BOOK_LIMIT_REACHED_MSG
+	JMP SHOW_MEMBER_MENU
+
+issue_book_not_found:
+	INVOKE MSG_DISPLAY, ADDR BOOK_NOT_FOUND_MSG
 	JMP SHOW_MEMBER_MENU
 
 RETURN_BOOK_FUNC:
-	; TODO: Implement return book functionality
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
+	; Prompt for ISBN
+	INVOKE MSG_DISPLAY, ADDR RETURN_BOOK_MSG
+	mov edx, OFFSET ISBN_SEARCH_BUF
+	mov ecx, 20
+	CALL READSTRING
+	
+	; Check if book is issued by reading ISSUED_BOOKS.txt
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je return_book_not_issued ; File doesn't exist
+	
+	mov filehandle, eax
+	
+	; Read all issued books
+	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
+	INVOKE CloseHandle, filehandle
+	
+	mov eax, DWORD PTR bytesRead
+	cmp eax, 0
+	je return_book_not_issued
+	
+	; Null-terminate
+	mov edi, OFFSET buffer_mem
+	mov ecx, DWORD PTR bytesRead
+	mov byte ptr [edi + ecx], 0
+	
+	; Search for ISBN and rebuild file without it
+	xor ebx, ebx ; offset in buffer
+	mov edi, OFFSET TEMP_LINE
+	mov byte ptr [edi], 0 ; flag for found
+	
+	; Reopen file for writing (truncate)
+	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_WRITE, DO_NOT_SHARE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
+	mov filehandle, eax
+	
+	xor ebx, ebx
+return_search_loop:
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge return_check_found
+	
+	lea esi, [OFFSET buffer_mem + ebx]
+	
+	; Find line length
+	xor ecx, ecx
+return_find_eol:
+	mov al, [esi + ecx]
+	cmp al, 0
+	je return_process_line
+	cmp al, 0Dh
+	je return_process_line
+	inc ecx
+	jmp return_find_eol
+	
+return_process_line:
+	cmp ecx, 0
+	je return_advance
+	
+	push ecx
+	push esi
+	
+	; Extract ISBN (3rd field) from line: username,bookname,ISBN,issuedate,returndate
+	push esi
+	xor edx, edx ; comma counter
+return_skip_to_isbn:
+	mov al, [esi]
+	cmp al, 0
+	je return_no_isbn_match_pop
+	cmp al, 0Dh
+	je return_no_isbn_match_pop
+	cmp al, ','
+	jne return_skip_next
+	inc edx
+	cmp edx, 2
+	je return_isbn_field_found
+return_skip_next:
+	inc esi
+	jmp return_skip_to_isbn
+	
+return_isbn_field_found:
+	; Skip the comma
+	inc esi
+	
+	; Copy ISBN to TEMP_FIELD
+	mov edi, OFFSET TEMP_FIELD
+return_copy_isbn_field:
+	mov al, [esi]
+	cmp al, 0
+	je return_compare_isbn
+	cmp al, 0Dh
+	je return_compare_isbn
+	cmp al, ','
+	je return_compare_isbn
+	mov [edi], al
+	inc esi
+	inc edi
+	jmp return_copy_isbn_field
+	
+return_compare_isbn:
+	mov byte ptr [edi], 0
+	
+	; Compare with ISBN_SEARCH_BUF
+	INVOKE Str_compare, ADDR ISBN_SEARCH_BUF, ADDR TEMP_FIELD
+	pop esi ; restore original line start
+	je return_skip_this_line ; Found it, don't write it back
+
+return_no_isbn_match_pop:
+	pop esi ; clean up the extra push
+	
+return_no_isbn_match:
+	; Not the ISBN we're looking for, write it back
+	pop esi
+	pop ecx
+	
+	; Write line
+	mov eax, filehandle
+	mov edx, esi
+	call WriteToFile
+	
+	; Write CRLF
+	mov eax, filehandle
+	mov edx, OFFSET CRLF_BYTES
+	push ecx
+	mov ecx, 2
+	call WriteToFile
+	pop ecx
+	
+	jmp return_advance
+	
+return_skip_this_line:
+	; Mark as found
+	mov edi, OFFSET TEMP_LINE
+	mov byte ptr [edi], 1
+	pop esi
+	pop ecx
+	
+return_advance:
+	add ebx, ecx
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
+	jne return_skip_lf
+	inc ebx
+return_skip_lf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
+	jne return_next_line
+	inc ebx
+return_next_line:
+	jmp return_search_loop
+	
+return_check_found:
+	INVOKE CloseHandle, filehandle
+	
+	; Check if we found the ISBN
+	mov edi, OFFSET TEMP_LINE
+	cmp byte ptr [edi], 1
+	jne return_book_not_issued
+	
+	INVOKE MSG_DISPLAY, ADDR BOOK_RETURNED_SUCCESS_MSG
+	JMP SHOW_MEMBER_MENU
+	
+return_book_not_issued:
+	INVOKE MSG_DISPLAY, ADDR BOOK_NOT_ISSUED_MSG
 	JMP SHOW_MEMBER_MENU
 
 VIEW_SORTED_FUNC:
