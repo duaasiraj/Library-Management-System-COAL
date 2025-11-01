@@ -95,7 +95,7 @@ EXIT_MSG	   BYTE 0AH,
 					"	See you again  :')",0dh, 0ah,
 					"	------------------", 0
 					
-	CRLF_BYTES BYTE 0Dh,0Ah
+	CRLF_BYTES BYTE 0Dh,0Ah,0
 	NAME_LABEL BYTE "Name: ",0
 	AUTHOR_LABEL BYTE "Author: ",0
 	PUBLISHER_LABEL BYTE "Publisher: ",0
