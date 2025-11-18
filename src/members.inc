@@ -32,45 +32,45 @@ MEMBER_SIGNIN:
     ; Parse buffer line by line
     xor ebx, ebx            ; ebx = offset into BUFFER_MEM
 
-search_loop_fixed:
+search_loop:
     mov eax, DWORD PTR bytesRead
     cmp ebx, eax
-    jge notfound_fixed      ; reached end without match
+    jge notfound     ; reached end without match
 
     ; Calculate line start pointer
     lea edi, [OFFSET BUFFER_MEM + ebx]
 
     ; Find line length
     xor ecx, ecx
-find_eol_fixed:
+find_eol:
     mov al, [edi + ecx]
     cmp al, 0
-    je process_line_fixed
+    je process_line
     cmp al, 0Dh
-    je process_line_fixed
+    je process_line
     cmp al, 0Ah
-    je process_line_fixed
+    je process_line
     inc ecx
-    jmp find_eol_fixed
+    jmp find_eol
 
-process_line_fixed:
+process_line:
     ; Store line length on stack
     push ecx
     
     cmp ecx, 0
-    je advance_offset_fixed   ; empty line, skip
+    je advance_offset   ; empty line, skip
 
     ; Find comma position in edx (0..ecx-1)
     xor edx, edx
-find_comma_fixed:
+find_comma:
     cmp edx, ecx
-    jge advance_offset_fixed
+    jge advance_offset
     cmp byte ptr [edi + edx], ','
-    je got_comma_fixed
+    je got_comma
     inc edx
-    jmp find_comma_fixed
+    jmp find_comma
 
-got_comma_fixed:
+got_comma:
     ; Save comma position and line start
     push edx
     push edi
@@ -79,16 +79,16 @@ got_comma_fixed:
     mov esi, edi
     mov edi, OFFSET LINE_USER_BUF
     mov ecx, edx
-copy_user_fixed:
+copy_user:
     cmp ecx, 0
-    je term_user_fixed
+    je term_user
     mov al, [esi]
     mov [edi], al
     inc esi
     inc edi
     dec ecx
-    jmp copy_user_fixed
-term_user_fixed:
+    jmp copy_user
+term_user:
     mov byte ptr [edi], 0
 
     ; Restore registers
@@ -100,33 +100,33 @@ term_user_fixed:
     sub eax, edx
     dec eax
     cmp eax, 0
-    jle term_pass_fixed2
+    jle term_pass2
 
     ; Copy password to LINE_PASS_BUF
     push edi
     lea esi, [edi + edx + 1]  ; start after comma
     mov edi, OFFSET LINE_PASS_BUF
     mov ecx, eax  ; password length
-copy_pass_fixed:
+copy_pass:
     cmp ecx, 0
-    je term_pass_fixed2
+    je term_pass2
     mov al, [esi]
     mov [edi], al
     inc esi
     inc edi
     dec ecx
-    jmp copy_pass_fixed
-term_pass_fixed2:
+    jmp copy_pass
+term_pass2:
     mov byte ptr [edi], 0
     pop edi
 
     ; Compare username
     INVOKE Str_compare, ADDR USERNAME_BUF, ADDR LINE_USER_BUF
-    jne restore_and_continue_fixed
+    jne restore_and_continue
     
     ; Compare password
     INVOKE Str_compare, ADDR PASSWORD_BUF, ADDR LINE_PASS_BUF
-    jne restore_and_continue_fixed
+    jne restore_and_continue
 
     ; Found match -> clean up stack, show success message with username and member menu
     pop ecx  ; remove line length from stack
@@ -143,7 +143,7 @@ term_pass_fixed2:
     
     JMP SHOW_MEMBER_MENU
 
-restore_and_continue_fixed:
+restore_and_continue:
     ; Get line length from stack
     pop ecx
     
@@ -156,12 +156,12 @@ restore_and_continue_fixed:
     inc ebx
 skip_lf_member:
     cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
-    jne cont_loop_fixed
+    jne cont_loop
     inc ebx
-cont_loop_fixed:
-    jmp search_loop_fixed
+cont_loop:
+    jmp search_loop
 
-advance_offset_fixed:
+advance_offset:
     ; Pop line length
     pop ecx
     
@@ -174,12 +174,12 @@ advance_offset_fixed:
     inc ebx
 skip_lf_member2:
     cmp byte ptr [OFFSET BUFFER_MEM + ebx], 0Ah
-    jne after_cr_fixed
+    jne after_cr
     inc ebx
-after_cr_fixed:
-    jmp search_loop_fixed
+after_cr:
+    jmp search_loop
 
-notfound_fixed:
+notfound:
     ; no matching entry
     jmp invalid
 
@@ -276,23 +276,7 @@ REG_M:
 ;--------------------------------------
 ;--------------VIEW MEMBERS------------
 ;--------------------------------------
-	VIEW_M:
-		INVOKE MSG_DISPLAY, ADDR VIEW_MEMBERS_MSG
-	MOV ECX, NUM_MEMBERS
-	cmp ECX, 0
-	JE START
-	MOV EBX, 0
-OUTPUT:
-	MOV ESI, OFFSET MEMBERS
-	MOV EAX, MEMBER_SIZE
-	MUL EBX
-	ADD ESI, Eax
-	MOV EDX, ESI
-	CALL WRITESTRING
-	INC EBX
-	CALL CRLF
-LOOP OUTPUT
-		JMP START
+
 
 ; VIEW MEMBERS FROM FILE
 VIEW_MFILE:
@@ -397,3 +381,4 @@ vm_loop_after_advance_file:
 
 vm_done_file:
 	JMP SHOW_FULL_MENU
+
