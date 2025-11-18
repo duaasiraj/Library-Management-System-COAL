@@ -44,7 +44,7 @@ ADD_B:
 		mov ecx, 10
 		CALL READSTRING
 		
-		; Store book information in the books array (simplified - just store in memory for now)
+
 		; The main storage will be in the file, so we'll skip the complex memory copying
 		
 		INC NUM_BOOKS
@@ -156,43 +156,21 @@ ADD_B:
 		JMP SHOW_FULL_MENU
 
 ;------------------------------------
-;-------------VIEW BOOKS-------------
+;-------VIEW BOOKS FROM FILE--------
 ;------------------------------------
-	VIEW_B:
-	
-	INVOKE MSG_DISPLAY, ADDR VIEW_BOOKS_MSG
-	MOV ECX, NUM_BOOKS
-	cmp ECX, 0
-	JE SHOW_FULL_MENU
-	MOV EBX, 0
-OUTPUTB:
-	MOV ESI, OFFSET BOOKS
-	MOV EAX, BOOK_SIZE
-	MUL EBX
-	ADD ESI, Eax
-	MOV EDX, ESI
-	CALL WRITESTRING
-	INC EBX
-	CALL CRLF	
-LOOP OUTPUTB
-		
-JMP SHOW_FULL_MENU
-; VIEW BOOKS FROM FILE
 VIEW_BFILE:
 	INVOKE CreateFile,
-	ADDR BOOKS_FILE, ; ptr to filename
-	GENERIC_READ, ; mode = Can read
-	DO_NOT_SHARE, ; share mode
-	NULL, ; ptr to security attributes
-	OPEN_ALWAYS, ; open an existing file
-	FILE_ATTRIBUTE_NORMAL, ; normal file attribute
-	0 ; not used
-	mov filehandle, eax ; Copy handle to variable
-	; Read entire file into BUFFER_BOOK (use helper to ensure full file is read)
+		ADDR BOOKS_FILE,
+		GENERIC_READ,
+		DO_NOT_SHARE,
+		NULL,
+		OPEN_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL,
+		0
+	mov filehandle, eax
 	CALL ReadAllBooks
-	; Display each CSV line with labels: Name, Author, Publisher, Genre, Year, ISBN
 	mov esi, OFFSET BUFFER_BOOK
-	xor ebx, ebx                ; offset into buffer
+	xor ebx, ebx
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
 	je vb_done
@@ -202,14 +180,10 @@ vb_loop:
 	cmp ebx, eax
 	jge vb_done
 
-	; esi currently base; set esi_line to line start
-	lea esi, [OFFSET BUFFER_BOOK]
-	add esi, ebx               ; esi -> start of current line
-
-	; find end of line (ecc = line length)
+	lea edi, [OFFSET BUFFER_BOOK + ebx]
 	xor ecx, ecx
 vb_find_eol:
-	mov al, [esi + ecx]
+	mov al, [edi + ecx]
 	cmp al, 0
 	je vb_proc_line
 	cmp al, 0Dh
@@ -222,168 +196,16 @@ vb_proc_line:
 	cmp ecx, 0
 	je vb_advance_only
 
-	; copy fields sequentially from esi into the named buffers
-	; Field 1 -> BOOK_NAME_BUF
-	mov edi, OFFSET BOOK_NAME_BUF
-vb_copy_name:
-	mov al, [esi]
-	cmp al, ','
-	je vb_name_done
-	cmp al, 0Dh
-	je vb_name_done
-	cmp al, 0Ah
-	je vb_name_done
-	mov [edi], al
-	inc edi
-	inc esi
-	jmp vb_copy_name
-vb_name_done:
-	mov byte ptr [edi], 0
-	; skip comma if present
-	cmp byte ptr [esi], ','
-	jne vb_after_name
-	inc esi
-vb_after_name:
+	; Temporarily null-terminate the line
+	mov al, [edi + ecx]
+	push eax
+	mov byte ptr [edi + ecx], 0
+	mov edx, edi
+	call DisplayBookLine
+	pop eax
+	mov [edi + ecx], al
 
-	; Field 2 -> BOOK_AUTHOR_BUF
-	mov edi, OFFSET BOOK_AUTHOR_BUF
-vb_copy_author:
-	mov al, [esi]
-	cmp al, ','
-	je vb_author_done
-	cmp al, 0Dh
-	je vb_author_done
-	cmp al, 0Ah
-	je vb_author_done
-	mov [edi], al
-	inc edi
-	inc esi
-	jmp vb_copy_author
-vb_author_done:
-	mov byte ptr [edi], 0
-	cmp byte ptr [esi], ','
-	jne vb_after_author
-	inc esi
-vb_after_author:
-
-	; Field 3 -> BOOK_PUBLISHER_BUF
-	mov edi, OFFSET BOOK_PUBLISHER_BUF
-vb_copy_publisher:
-	mov al, [esi]
-	cmp al, ','
-	je vb_publisher_done
-	cmp al, 0Dh
-	je vb_publisher_done
-	cmp al, 0Ah
-	je vb_publisher_done
-	mov [edi], al
-	inc edi
-	inc esi
-	jmp vb_copy_publisher
-vb_publisher_done:
-	mov byte ptr [edi], 0
-	cmp byte ptr [esi], ','
-	jne vb_after_publisher
-	inc esi
-vb_after_publisher:
-
-	; Field 4 -> BOOK_GENRE_BUF
-	mov edi, OFFSET BOOK_GENRE_BUF
-vb_copy_genre:
-	mov al, [esi]
-	cmp al, ','
-	je vb_genre_done
-	cmp al, 0Dh
-	je vb_genre_done
-	cmp al, 0Ah
-	je vb_genre_done
-	mov [edi], al
-	inc edi
-	inc esi
-	jmp vb_copy_genre
-vb_genre_done:
-	mov byte ptr [edi], 0
-	cmp byte ptr [esi], ','
-	jne vb_after_genre
-	inc esi
-vb_after_genre:
-
-	; Field 5 -> BOOK_YEAR_BUF
-	mov edi, OFFSET BOOK_YEAR_BUF
-vb_copy_year:
-	mov al, [esi]
-	cmp al, ','
-	je vb_year_done
-	cmp al, 0Dh
-	je vb_year_done
-	cmp al, 0Ah
-	je vb_year_done
-	mov [edi], al
-	inc edi
-	inc esi
-	jmp vb_copy_year
-vb_year_done:
-	mov byte ptr [edi], 0
-	cmp byte ptr [esi], ','
-	jne vb_after_year
-	inc esi
-vb_after_year:
-
-	; Field 6 -> BOOK_ISBN_BUF (rest of line)
-	mov edi, OFFSET BOOK_ISBN_BUF
-vb_copy_isbn:
-	mov al, [esi]
-	cmp al, 0Dh
-	je vb_isbn_done
-	cmp al, 0Ah
-	je vb_isbn_done
-	cmp al, 0
-	je vb_isbn_done
-	mov [edi], al
-	inc edi
-	inc esi
-	jmp vb_copy_isbn
-vb_isbn_done:
-	mov byte ptr [edi], 0
-
-	; Print nicely (spacing only) - header already printed before loop
-	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-
-	; Print Name label and name - just print normally
-	INVOKE MSG_DISPLAY, ADDR NAME_LABEL
-	mov edx, OFFSET BOOK_NAME_BUF
-	call WriteString
-	call CRLF
-
-	INVOKE MSG_DISPLAY, ADDR AUTHOR_LABEL
-	mov edx, OFFSET BOOK_AUTHOR_BUF
-	call WriteString
-	call CRLF
-
-	INVOKE MSG_DISPLAY, ADDR PUBLISHER_LABEL
-	mov edx, OFFSET BOOK_PUBLISHER_BUF
-	call WriteString
-	call CRLF
-
-	INVOKE MSG_DISPLAY, ADDR GENRE_LABEL
-	mov edx, OFFSET BOOK_GENRE_BUF
-	call WriteString
-	call CRLF
-
-	INVOKE MSG_DISPLAY, ADDR YEAR_LABEL
-	mov edx, OFFSET BOOK_YEAR_BUF
-	call WriteString
-	call CRLF
-
-	INVOKE MSG_DISPLAY, ADDR ISBN_LABEL
-	mov edx, OFFSET BOOK_ISBN_BUF
-	call WriteString
-	call CRLF
-
-	; compute new offset = esi - base
-	mov eax, esi
-	sub eax, OFFSET BUFFER_BOOK
-	mov ebx, eax
+	add ebx, ecx
 	; skip CR/LF if present
 	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
 	jne vb_loop_continue
@@ -395,14 +217,15 @@ vb_loop_continue:
 	jmp vb_loop
 
 vb_advance_only:
-	; empty line - just skip
-	lea eax, [OFFSET BUFFER_BOOK]
-	add eax, ebx
-	; advance by 1 (skip possible CR/LF)
-	inc eax
-	sub eax, OFFSET BUFFER_BOOK
-	mov ebx, eax
+	add ebx, ecx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Dh
+	jne vb_loop_continue
+	inc ebx
+	cmp byte ptr [OFFSET BUFFER_BOOK + ebx], 0Ah
+	jne vb_loop_continue
+	inc ebx
 	jmp vb_loop
 
 vb_done:
 	JMP SHOW_FULL_MENU
+
