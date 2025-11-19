@@ -432,3 +432,27 @@ parseLoop:
 done:
     ret
 ParseCSVLine ENDP
+
+; WriteCSVField - writes a string buffer to file, then a comma
+; Expects: eax = file handle, edx = buffer address
+WriteCSVField PROC fh:DWORD, buf:DWORD
+    push ecx
+    push edx
+
+    ; Write the buffer
+    mov edx, buf
+    INVOKE Str_length, edx
+    mov ecx, eax
+    mov eax, fh
+    call WriteToFile
+
+    ; Write comma
+    mov eax, fh
+    mov edx, OFFSET COMMA_BYTE
+    mov ecx, 1
+    call WriteToFile
+
+    pop edx
+    pop ecx
+    ret
+WriteCSVField ENDP
