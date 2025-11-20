@@ -4,7 +4,6 @@ INCLUDE src\data.inc
 .CODE
 MSG_DISPLAY proto, var: PTR DWORD
 STRING_INPUT proto, var1: PTR DWORD
-WriteCSVField PROTO handle:DWORD, buffer:DWORD
 
 main PROC
 	START:

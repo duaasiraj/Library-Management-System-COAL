@@ -557,13 +557,59 @@ return_date_ok:
 	; Move to end of file
 	INVOKE SetFilePointer, filehandle, 0, 0, FILE_END
 	
-	; Write username, book name, ISBN, and issue date via helper
-	INVOKE WriteCSVField, filehandle, OFFSET USERNAME_BUF
-	INVOKE WriteCSVField, filehandle, OFFSET ISSUED_BOOK_NAME_BUF
-	INVOKE WriteCSVField, filehandle, OFFSET ISBN_SEARCH_BUF
-	INVOKE WriteCSVField, filehandle, OFFSET DATE_BUF
+	; Write username
+	mov edx, OFFSET USERNAME_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
 	
-	; Write return date (final field, no trailing comma)
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write book name
+	mov edx, OFFSET ISSUED_BOOK_NAME_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write ISBN
+	mov edx, OFFSET ISBN_SEARCH_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write issue date
+	mov edx, OFFSET DATE_BUF
+	INVOKE Str_length, edx
+	mov ecx, eax
+	mov eax, filehandle
+	call WriteToFile
+	
+	; Write comma
+	mov eax, filehandle
+	mov edx, OFFSET COMMA_BYTE
+	mov ecx, 1
+	call WriteToFile
+	
+	; Write return date
 	mov edx, OFFSET RETURN_DATE_BUF
 	INVOKE Str_length, edx
 	mov ecx, eax
