@@ -642,10 +642,10 @@ RETURN_BOOK_FUNC:
 	mov ecx, 20
 	CALL READSTRING
 	
-	; Check if book is issued by reading ISSUED_BOOKS.txt
+	; Open ISSUED_BOOKS.txt for reading
 	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
 	cmp eax, INVALID_HANDLE_VALUE
-	je return_book_not_issued ; File doesn't exist
+	je return_book_not_issued           ; File doesn't exist or can't be opened
 	
 	mov filehandle, eax
 	
@@ -655,32 +655,32 @@ RETURN_BOOK_FUNC:
 	
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
-	je return_book_not_issued
+	je return_book_not_issued           ; Empty file -> nothing issued
 	
-	; Null-terminate
+	; Null-terminate buffer
 	mov edi, OFFSET buffer_mem
 	mov ecx, DWORD PTR bytesRead
 	mov byte ptr [edi + ecx], 0
 	
-	; Search for ISBN and rebuild file without it
-	xor ebx, ebx ; offset in buffer
-	mov edi, OFFSET TEMP_LINE
-	mov byte ptr [edi], 0 ; flag for found
-	
-	; Reopen file for writing (truncate)
+	; Reopen ISSUED_BOOKS.txt for rewrite (truncate)
 	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_WRITE, DO_NOT_SHARE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je return_book_not_issued
 	mov filehandle, eax
+	
+	; Initialize scan state
+	xor ebx, ebx                        ; EBX = offset into buffer_mem
+	mov byte ptr [TEMP_LINE], 0        ; use TEMP_LINE[0] as "found" flag
 
-	; Loop and rebuild file
-	xor ebx, ebx
 return_search_loop:
 	mov eax, DWORD PTR bytesRead
 	cmp ebx, eax
-	jge return_check_found
-
+	jge return_check_found              ; reached end of buffer
+	
+	; ESI = start of current line
 	lea esi, [OFFSET buffer_mem + ebx]
-
-	; Find line length
+	
+	; Find line length into ECX (stop at 0 or CR)
 	xor ecx, ecx
 return_find_eol:
 	mov al, [esi + ecx]
@@ -690,6 +690,117 @@ return_find_eol:
 	je return_process_line
 	inc ecx
 	jmp return_find_eol
+
+return_process_line:
+	cmp ecx, 0
+	je return_advance_only              ; empty line
+	
+	; Extract ISBN (3rd field) from line: username,bookname,ISBN,issuedate,returndate
+	; Use EDI as scanning pointer within the line
+	mov edi, esi                        ; EDI = current position in line
+	xor edx, edx                        ; EDX = comma counter
+
+return_skip_to_isbn:
+	mov al, [edi]
+	cmp al, 0
+	je return_write_line                ; malformed line, keep as-is
+	cmp al, 0Dh
+	je return_write_line                ; end-of-line without 3 fields
+	cmp al, ','
+	jne return_skip_next
+	inc edx
+	cmp edx, 2                          ; after 2 commas we are at ISBN field
+	je return_isbn_field_found
+return_skip_next:
+	inc edi
+	jmp return_skip_to_isbn
+
+return_isbn_field_found:
+	; Skip the comma to reach start of ISBN text
+	inc edi
+	
+	; Copy ISBN characters into TEMP_FIELD
+	mov esi, OFFSET TEMP_FIELD          ; ESI now used as destination buffer
+return_copy_isbn_field:
+	mov al, [edi]
+	cmp al, 0
+	je return_compare_isbn
+	cmp al, 0Dh
+	je return_compare_isbn
+	cmp al, ','
+	je return_compare_isbn
+	mov [esi], al
+	inc edi
+	inc esi
+	jmp return_copy_isbn_field
+
+return_compare_isbn:
+	mov byte ptr [esi], 0               ; null-terminate TEMP_FIELD
+	INVOKE Str_compare, ADDR ISBN_SEARCH_BUF, ADDR TEMP_FIELD
+	je return_mark_found_and_skip       ; matched -> skip writing this line
+
+	; No match -> fall through and write line back
+
+return_write_line:
+	; Write the original line back to ISSUED_BOOKS.txt
+	; ECX currently holds the line length. WriteToFile may destroy ECX,
+	; so save it across both write calls.
+	push ecx                      ; save line length
+	mov eax, filehandle
+	lea edx, [OFFSET buffer_mem + ebx]  ; line start pointer
+	call WriteToFile                    ; may clobber ECX
+	
+	; Write CRLF
+	mov eax, filehandle
+	mov edx, OFFSET CRLF_BYTES
+	mov ecx, 2
+	call WriteToFile
+	
+	pop ecx                       ; restore original line length
+
+return_advance_only:
+	; Advance EBX by line length and skip CR/LF if present
+	cmp ecx, 0
+	jne return_advance_by_ecx
+	; If ecx is 0 (empty line), advance by 1 to avoid infinite loop
+	inc ebx
+	jmp return_check_crlf
+return_advance_by_ecx:
+	add ebx, ecx
+return_check_crlf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
+	jne return_skip_lf
+	inc ebx
+return_skip_lf:
+	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
+	jne return_next_line
+	inc ebx
+return_next_line:
+	; Safety: if ebx did not advance, break to avoid infinite loop
+	mov eax, DWORD PTR bytesRead
+	cmp ebx, eax
+	jge return_check_found
+	jmp return_search_loop
+
+return_mark_found_and_skip:
+	; Mark that we found and removed the ISBN line, but do not write it back
+	mov byte ptr [TEMP_LINE], 1
+	jmp return_advance_only
+
+return_check_found:
+	INVOKE CloseHandle, filehandle
+	
+	; Check if we found and removed the ISBN entry
+	cmp byte ptr [TEMP_LINE], 1
+	jne return_book_not_issued
+	
+	INVOKE MSG_DISPLAY, ADDR BOOK_RETURNED_SUCCESS_MSG
+	JMP SHOW_MEMBER_MENU
+	
+return_book_not_issued:
+	INVOKE MSG_DISPLAY, ADDR BOOK_NOT_ISSUED_MSG
+	JMP SHOW_MEMBER_MENU
+
 ISSUE_BOOK_FUNC:
 	; First, check if user has already issued 5 books
 	; Read ISSUED_BOOKS.txt and count books issued by current user
@@ -723,7 +834,7 @@ issue_count_loop:
 	
 	lea edi, [OFFSET buffer_mem + ebx]
 	
-	; Find line length
+push esi            ; line start pointer
 	xor ecx, ecx
 issue_count_eol:
 	mov al, [edi + ecx]
@@ -911,114 +1022,3 @@ issue_next_line:
 issue_advance_empty:
 	xor ecx, ecx
 	jmp issue_advance
-	
-	
-return_process_line:
-	cmp ecx, 0
-	je return_advance
-	
-	push ecx
-	push esi
-	
-	; Extract ISBN (3rd field) from line: username,bookname,ISBN,issuedate,returndate
-	push esi
-	xor edx, edx ; comma counter
-return_skip_to_isbn:
-	mov al, [esi]
-	cmp al, 0
-	je return_no_isbn_match_pop
-	cmp al, 0Dh
-	je return_no_isbn_match_pop
-	cmp al, ','
-	jne return_skip_next
-	inc edx
-	cmp edx, 2
-	je return_isbn_field_found
-return_skip_next:
-	inc esi
-	jmp return_skip_to_isbn
-	
-return_isbn_field_found:
-	; Skip the comma
-	inc esi
-	
-	; Copy ISBN to TEMP_FIELD
-	mov edi, OFFSET TEMP_FIELD
-return_copy_isbn_field:
-	mov al, [esi]
-	cmp al, 0
-	je return_compare_isbn
-	cmp al, 0Dh
-	je return_compare_isbn
-	cmp al, ','
-	je return_compare_isbn
-	mov [edi], al
-	inc esi
-	inc edi
-	jmp return_copy_isbn_field
-	
-return_compare_isbn:
-	mov byte ptr [edi], 0
-	
-	; Compare with ISBN_SEARCH_BUF
-	INVOKE Str_compare, ADDR ISBN_SEARCH_BUF, ADDR TEMP_FIELD
-	pop esi ; restore original line start
-	je return_skip_this_line ; Found it, don't write it back
-
-return_no_isbn_match_pop:
-	pop esi ; clean up the extra push
-	
-return_no_isbn_match:
-	; Not the ISBN we're looking for, write it back
-	pop esi
-	pop ecx
-	
-	; Write line
-	mov eax, filehandle
-	mov edx, esi
-	call WriteToFile
-	
-	; Write CRLF
-	mov eax, filehandle
-	mov edx, OFFSET CRLF_BYTES
-	push ecx
-	mov ecx, 2
-	call WriteToFile
-	pop ecx
-	
-	jmp return_advance
-	
-return_skip_this_line:
-	; Mark as found
-	mov edi, OFFSET TEMP_LINE
-	mov byte ptr [edi], 1
-	pop esi
-	pop ecx
-	
-return_advance:
-	add ebx, ecx
-	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
-	jne return_skip_lf
-	inc ebx
-return_skip_lf:
-	cmp byte ptr [OFFSET buffer_mem + ebx], 0Ah
-	jne return_next_line
-	inc ebx
-return_next_line:
-	jmp return_search_loop
-	
-return_check_found:
-	INVOKE CloseHandle, filehandle
-	
-	; Check if we found the ISBN
-	mov edi, OFFSET TEMP_LINE
-	cmp byte ptr [edi], 1
-	jne return_book_not_issued
-	
-	INVOKE MSG_DISPLAY, ADDR BOOK_RETURNED_SUCCESS_MSG
-	JMP SHOW_MEMBER_MENU
-	
-return_book_not_issued:
-	INVOKE MSG_DISPLAY, ADDR BOOK_NOT_ISSUED_MSG
-	JMP SHOW_MEMBER_MENU
-
