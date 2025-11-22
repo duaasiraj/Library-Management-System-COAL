@@ -1,6 +1,6 @@
 @echo off
 set masm_path=C:\masm32\bin
-set irvine_path=C:\Users\Faizanb\Desktop\Irvine
+set irvine_path=
 
 
 %masm_path%\ml /c /coff /I "%irvine_path%" SourceCode.asm
