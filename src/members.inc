@@ -1,4 +1,3 @@
-
 MEMBER_SIGNIN:
     ; Prompt for username
     INVOKE MSG_DISPLAY, ADDR SIGNIN_USER_MSG
@@ -192,7 +191,6 @@ invalid:
     INVOKE MSG_DISPLAY, ADDR INVALID_CRED_MSG
     JMP START
 
-
 LIB_LOGIN:
 		; Prompt for librarian code and validate
 		INVOKE MSG_DISPLAY, ADDR LIB_LOGIN_MSG
@@ -237,10 +235,28 @@ REG_M:
 	INVOKE SetFilePointer, filehandle, 0, 0, FILE_END
 
 	; Prompt for a password for this member
-	INVOKE MSG_DISPLAY, ADDR SIGNIN_PASS_MSG
-	mov edx, OFFSET PASSWORD_BUF
-	mov ecx, 10
-	CALL READSTRING
+	; Prompt for a password for this member
+GET_PASSWORD:
+    INVOKE MSG_DISPLAY, ADDR SIGNIN_PASS_MSG
+    mov edx, OFFSET PASSWORD_BUF
+    mov ecx, 20                ; allow user to type up to 20 chars
+    CALL READSTRING
+
+    ; Check password length >= 8
+    mov edx, OFFSET PASSWORD_BUF
+    INVOKE Str_length, edx     ; result in EAX
+    cmp eax, 8
+    jl PASS_TOO_SHORT          ; if < 8, show error and re-enter
+
+    jmp PASS_OK
+
+PASS_TOO_SHORT:
+    INVOKE MSG_DISPLAY, ADDR PASS_TOO_SHORT_MSG
+	call Crlf
+    jmp GET_PASSWORD
+
+PASS_OK:
+
 
 	; ESI already points to the member buffer; write name to file
 	mov edx, esi          ; pointer to name buffer
@@ -272,11 +288,6 @@ REG_M:
 
 
 		JMP START
-
-;--------------------------------------
-;--------------VIEW MEMBERS------------
-;--------------------------------------
-
 
 ; VIEW MEMBERS FROM FILE
 VIEW_MFILE:
@@ -381,4 +392,3 @@ vm_loop_after_advance_file:
 
 vm_done_file:
 	JMP SHOW_FULL_MENU
-

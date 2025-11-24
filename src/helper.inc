@@ -1,3 +1,41 @@
+IntToStr PROC
+    push ebx
+    push ecx
+    push edx
+    mov ebx, 10
+    mov ecx, 0
+    cmp eax, 0
+    jne its_convert
+    mov byte ptr [edx], '0'
+    inc edx
+    mov byte ptr [edx], 0
+    pop edx
+    pop ecx
+    pop ebx
+    ret
+its_convert:
+    ; store digits in reverse order
+    mov esi, edx
+its_loop:
+    xor edx, edx
+    div ebx
+    add edx, '0'
+    push edx
+    inc ecx
+    test eax, eax
+    jnz its_loop
+    ; pop digits in correct order
+its_pop:
+    pop eax
+    mov [esi], al
+    inc esi
+    loop its_pop
+    mov byte ptr [esi], 0
+    pop edx
+    pop ecx
+    pop ebx
+    ret
+IntToStr ENDP
 MSG_DISPLAY PROC USES EDX, VAR: ptr dword
     MOV EDX, VAR
     CALL WRITESTRING

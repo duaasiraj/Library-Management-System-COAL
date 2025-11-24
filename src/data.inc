@@ -1,3 +1,9 @@
+.DATA
+
+; --- Global variables for fines/overdue routines ---
+CURRENT_DATE_DWORD DWORD 0
+OVERDUE_COUNT DWORD 0
+LINE_START_PTR DWORD 0
 
 .DATA
 
@@ -27,6 +33,8 @@ msg1     BYTE 0AH
 MEMBER_MENU_MSG BYTE 0Ah, "1-> Sign In",0dh,0ah, "2-> Register",0dh,0ah, "Choose Your Option : ",0
 MEMBER_SUCCESS_MSG BYTE 0AH, "Login successful! Welcome, ",0
 MEMBER_SUCCESS_MSG2 BYTE ".",0dh,0ah,0
+PASS_TOO_SHORT_MSG db "Password must be at least 8 characters long!",0
+
 
 MEMBER_OPTIONS_MSG BYTE 0Ah
     BYTE    "Member Menu:",0dh,0ah
@@ -86,16 +94,16 @@ PASSWORD_BUF BYTE 10 DUP(?)
 COMMA_BYTE BYTE ',',0
 LINE_USER_BUF BYTE 20 DUP(?)
 LINE_PASS_BUF BYTE 10 DUP(?)
-REG_MSG    BYTE "    Enter Name: ",0
+REG_MSG    BYTE "Enter Name: ",0
 VIEW_MEMBERS_MSG BYTE 0Ah,"    Viewing Registered Members: ",0AH, 0DH, 0
 ADD_MSG             BYTE "    Enter Book Name & Author Name to Add: ", 0dh, 0ah,
                  "    Separated By Comma:",0
 VIEW_BOOKS_MSG BYTE 0Ah, "    Viewing Books in Library: ",  0dh, 0ah, 0
 EXIT_MSG       BYTE 0AH,
-                    "    ----------------- ",0dh, 0ah,
-                    "    Exiting Program...",0dh, 0ah,
-                    "    See you again  :')",0dh, 0ah,
-                    "    ------------------", 0
+                    " ------------------------------ ",0dh, 0ah,
+                    "   Exiting Program",0dh, 0ah,
+                    "    See you again ",0dh, 0ah,
+                    " ------------------------------", 0
                     
     CRLF_BYTES BYTE 0Dh,0Ah,0
     NAME_LABEL BYTE "Name: ",0
@@ -105,7 +113,13 @@ EXIT_MSG       BYTE 0AH,
     YEAR_LABEL BYTE "Year: ",0
     ISBN_LABEL BYTE "ISBN: ",0
                     
-; variables to maniulate Books & Members
+
+
+; Overdue file and related variables
+OVERDUE_FILE BYTE "data\\overdue.txt",0
+overduefile DWORD ?
+bytesWritten DWORD ?
+
 
 bool           DWORD ?
 MEMBERS_FILE   BYTE "data\\MEMBERS.txt",0
@@ -165,6 +179,7 @@ BOOK_NAME_SIZE = 150
 BOOK_AUTHOR_SIZE = 150
 BOOK_PUBLISHER_SIZE = 150
 BOOK_GENRE_SIZE = 100
+
 
 ; Book input buffers
 BOOK_NAME_BUF DB BOOK_NAME_SIZE DUP (?)

@@ -1,7 +1,4 @@
 ahmed,pass1234
-ahmed,pass1234
-ahmed,pass1234
-ahmed,pass1234
-ahmed,pass1234
 asfand,pass1234
 shehryar,pass1234
+duaa,abc
