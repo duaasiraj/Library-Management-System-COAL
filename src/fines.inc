@@ -1,23 +1,26 @@
 VIEW_OVERDUE_FUNC:
 	; Display overdue books header
 	INVOKE MSG_DISPLAY, ADDR OVERDUE_BOOKS_HEADER
-	
+
+	; Reset overdue count for this view
+	mov DWORD PTR [OVERDUE_COUNT], 0
+
 	; Get current date
 	push eax
 	push ebx
 	push ecx
 	push edx
-	
+
 	sub esp, 16
 	mov esi, esp
 	INVOKE GetLocalTime, esi
-	
+
 	; Extract day, month, year
 	movzx eax, WORD PTR [esi+2]  ; wMonth
 	movzx ebx, WORD PTR [esi+6]  ; wDay
 	movzx ecx, WORD PTR [esi]    ; wYear
 	add esp, 16
-	
+
 	; Store current date values for comparison
 	; Convert to comparable format: YYYYMMDD
 	; Current date = year*10000 + month*100 + day
@@ -34,28 +37,33 @@ VIEW_OVERDUE_FUNC:
 	pop eax       ; get day
 	add ecx, eax  ; ecx += day
 	; Now ecx contains current date as YYYYMMDD
-	push ecx      ; save current date
-	
+	mov DWORD PTR [CURRENT_DATE_DWORD], ecx ; store globally instead of on stack
+
 	; Read ISSUED_BOOKS.txt
 	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
 	cmp eax, INVALID_HANDLE_VALUE
-	je overdue_no_books
+	jne overdue_file_ok
+	; File could not be opened, show no-overdue message
+	JMP overdue_no_books
+overdue_file_ok:
 	
 	mov filehandle, eax
 	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
 	INVOKE CloseHandle, filehandle
-	
+
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
-	je overdue_no_books
+	jne overdue_buffer_ok
+	; Empty file, treat as no overdue books
+	JMP overdue_no_books_cleanup
+overdue_buffer_ok:
 	
 	; Null-terminate buffer
 	mov edi, OFFSET buffer_mem
 	mov ecx, DWORD PTR bytesRead
 	mov byte ptr [edi + ecx], 0
-	
+
 	xor ebx, ebx  ; offset in buffer
-	xor esi, esi  ; counter for overdue books
 	
 overdue_loop:
 	mov eax, DWORD PTR bytesRead
@@ -76,23 +84,25 @@ overdue_find_eol:
 	jmp overdue_find_eol
 	
 overdue_process_line:
+overdue_line_done:
+overdue_advance:
 	cmp ecx, 0
-	je overdue_advance
-	
+	je overdue_pop_and_advance
+
 	push ecx
 	push edi
-	
+
 	; Parse line: username,bookname,ISBN,issuedate,returndate
 	; Extract return date (5th field)
 	mov esi, edi
 	xor edx, edx  ; comma counter
-	
+
 overdue_skip_to_return_date:
 	mov al, [esi]
 	cmp al, 0
-	je overdue_line_done
+	je overdue_pop_and_advance
 	cmp al, 0Dh
-	je overdue_line_done
+	je overdue_pop_and_advance
 	cmp al, ','
 	jne overdue_skip_char
 	inc edx
@@ -101,11 +111,11 @@ overdue_skip_to_return_date:
 overdue_skip_char:
 	inc esi
 	jmp overdue_skip_to_return_date
-	
+
 overdue_found_return_date:
 	; Skip comma
 	inc esi
-	
+
 	; Copy return date to PARSED_RETURN_DATE_BUF
 	push edi
 	mov edi, OFFSET PARSED_RETURN_DATE_BUF
@@ -121,15 +131,15 @@ overdue_copy_date:
 	inc esi
 	inc edi
 	jmp overdue_copy_date
-	
+
 overdue_date_copied:
 	mov byte ptr [edi], 0
 	pop edi
-	
+    
 	; Parse return date DD/MM/YYYY and convert to YYYYMMDD
 	push edi
 	mov esi, OFFSET PARSED_RETURN_DATE_BUF
-	
+    
 	; Extract day (first 2 chars)
 	movzx eax, byte ptr [esi]
 	sub al, '0'
@@ -140,7 +150,7 @@ overdue_date_copied:
 	add al, dl
 	movzx eax, al
 	push eax  ; save day
-	
+    
 	; Extract month (chars 3-4, after '/')
 	movzx eax, byte ptr [esi+3]
 	sub al, '0'
@@ -151,60 +161,55 @@ overdue_date_copied:
 	add al, dl
 	movzx eax, al
 	push eax  ; save month
-	
+    
 	; Extract year (chars 6-9, after second '/')
 	movzx eax, byte ptr [esi+6]
 	sub al, '0'
 	mov dx, 1000
 	mul dx
 	movzx ecx, ax
-	
+    
 	movzx eax, byte ptr [esi+7]
 	sub al, '0'
 	mov dx, 100
 	mul dx
 	add ecx, eax
-	
+    
 	movzx eax, byte ptr [esi+8]
 	sub al, '0'
 	mov dx, 10
 	mul dx
 	add ecx, eax
-	
+    
 	movzx eax, byte ptr [esi+9]
 	sub al, '0'
 	add ecx, eax
-	
+    
 	; Now ecx = year, calculate YYYYMMDD
 	mov eax, ecx
 	mov edx, 10000
 	mul edx
 	mov ecx, eax  ; ecx = year * 10000
-	
+    
 	pop eax  ; get month
 	mov edx, 100
 	mul edx
 	add ecx, eax  ; ecx += month * 100
-	
+    
 	pop eax  ; get day
 	add ecx, eax  ; ecx += day
-	
+    
 	pop edi
-	
+    
 	; Compare with current date
-	mov eax, [esp+8]  ; get current date from stack
+	mov eax, DWORD PTR [CURRENT_DATE_DWORD]  ; get current date (YYYYMMDD)
 	cmp ecx, eax
-	jge overdue_line_done  ; return date >= current date, not overdue
-	
+	jge overdue_pop_and_advance  ; return date >= current date, not overdue
+    
 	; Book is overdue! Extract and display details
-	pop edi
-	pop ecx
-	push ecx
-	push edi
-	
 	; Extract all fields from line
 	mov esi, edi
-	
+    
 	; Field 1: Username
 	mov edi, OFFSET OVERDUE_USERNAME_BUF
 overdue_extract_user:
@@ -218,7 +223,7 @@ overdue_extract_user:
 overdue_user_done:
 	mov byte ptr [edi], 0
 	inc esi
-	
+    
 	; Field 2: Book name
 	mov edi, OFFSET OVERDUE_BOOKNAME_BUF
 overdue_extract_book:
@@ -232,7 +237,7 @@ overdue_extract_book:
 overdue_book_done:
 	mov byte ptr [edi], 0
 	inc esi
-	
+    
 	; Field 3: ISBN
 	mov edi, OFFSET OVERDUE_ISBN_BUF
 overdue_extract_isbn:
@@ -246,7 +251,7 @@ overdue_extract_isbn:
 overdue_isbn_done:
 	mov byte ptr [edi], 0
 	inc esi
-	
+    
 	; Field 4: Issue date
 	mov edi, OFFSET OVERDUE_ISSUE_DATE_BUF
 overdue_extract_issue:
@@ -259,37 +264,37 @@ overdue_extract_issue:
 	jmp overdue_extract_issue
 overdue_issue_done:
 	mov byte ptr [edi], 0
-	
+    
 	; Display overdue book details
 	INVOKE MSG_DISPLAY, ADDR USERNAME_LABEL
 	INVOKE MSG_DISPLAY, ADDR OVERDUE_USERNAME_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	
+
 	INVOKE MSG_DISPLAY, ADDR NAME_LABEL
 	INVOKE MSG_DISPLAY, ADDR OVERDUE_BOOKNAME_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	
+
 	INVOKE MSG_DISPLAY, ADDR ISBN_LABEL
 	INVOKE MSG_DISPLAY, ADDR OVERDUE_ISBN_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	
+
 	INVOKE MSG_DISPLAY, ADDR ISSUE_DATE_LABEL
 	INVOKE MSG_DISPLAY, ADDR OVERDUE_ISSUE_DATE_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	
+
 	INVOKE MSG_DISPLAY, ADDR RETURN_DATE_LABEL
 	INVOKE MSG_DISPLAY, ADDR PARSED_RETURN_DATE_BUF
 	INVOKE MSG_DISPLAY, ADDR CRLF_BYTES
-	
+
 	INVOKE MSG_DISPLAY, ADDR OVERDUE_SEPARATOR
-	
-	inc DWORD PTR [esp+8+4]  ; increment overdue counter (accounting for pushes)
-	
-overdue_line_done:
+
+	; Increment overdue count
+	inc DWORD PTR [OVERDUE_COUNT]
+
+overdue_pop_and_advance:
 	pop edi
 	pop ecx
-	
-overdue_advance:
+
 	add ebx, ecx
 	cmp byte ptr [OFFSET buffer_mem + ebx], 0Dh
 	jne overdue_skip_lf
@@ -302,17 +307,18 @@ overdue_next_line:
 	jmp overdue_loop
 	
 overdue_check_count:
-	; Clean up stack (current date)
-	pop ecx
-	
 	; Check if any overdue books found
-	cmp esi, 0
+	mov eax, DWORD PTR [OVERDUE_COUNT]
+	cmp eax, 0
 	jne overdue_done
-	
+
 overdue_no_books:
 	INVOKE MSG_DISPLAY, ADDR NO_OVERDUE_MSG
-	
+
+overdue_no_books_cleanup:
+
 overdue_done:
+	; Ensure stack is balanced before returning
 	pop edx
 	pop ecx
 	pop ebx
@@ -378,7 +384,7 @@ CALCULATE_FINES_FUNC:
 	; Read ISSUED_BOOKS.txt
 	INVOKE CreateFile, ADDR ISSUED_BOOKS_FILE, GENERIC_READ, DO_NOT_SHARE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
 	cmp eax, INVALID_HANDLE_VALUE
-	je fines_no_books
+	je fines_no_books_early
 	
 	mov filehandle, eax
 	INVOKE ReadFile, filehandle, ADDR buffer_mem, BUFFER_SIZE, ADDR bytesRead, 0
@@ -386,7 +392,7 @@ CALCULATE_FINES_FUNC:
 	
 	mov eax, DWORD PTR bytesRead
 	cmp eax, 0
-	je fines_no_books
+	je fines_no_books_early
 	
 	; Null-terminate buffer
 	mov edi, OFFSET buffer_mem
@@ -742,9 +748,12 @@ fines_check_total:
 	; No total display needed
 	jmp fines_done
 	
-fines_no_books:
-	; Clean up stack if we jumped here
+fines_no_books_early:
+	; Clean up stack if we jumped here before popping date values
 	add esp, 16  ; clean up date components and current date
+	jmp fines_no_books
+	
+fines_no_books:
 	INVOKE MSG_DISPLAY, ADDR NO_FINES_MSG
 	
 fines_done:

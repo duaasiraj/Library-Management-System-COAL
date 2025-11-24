@@ -11,9 +11,6 @@ ADD_B:
 		cmp eax, 13
 		jne invalid_isbn
 		
-		; Check for duplicate ISBN (simplified - just check if any book exists)
-		; For this implementation, we'll skip duplicate checking for simplicity
-		
 		; Prompt for book name
 		INVOKE MSG_DISPLAY, ADDR BOOK_NAME_PROMPT
 		mov edx, OFFSET BOOK_NAME_BUF
@@ -43,10 +40,7 @@ ADD_B:
 		mov edx, OFFSET BOOK_YEAR_BUF
 		mov ecx, 10
 		CALL READSTRING
-		
-
-		; The main storage will be in the file, so we'll skip the complex memory copying
-		
+	
 		INC NUM_BOOKS
 		
 		; Write book data to BOOKS.txt file
@@ -68,84 +62,71 @@ ADD_B:
 		INVOKE Str_length, edx
 		cmp eax, 0
 		je skip_name_write
-		mov ecx, eax          ; length returned in EAX
+	    mov ecx, eax          ; length of book name (from Str_length) to write
 		mov eax, filehandle
 		call WriteToFile
 	skip_name_write:
-
 		; write comma separator
 		mov eax, filehandle
 		mov edx, OFFSET COMMA_BYTE
 		mov ecx, 1
 		call WriteToFile
-
 		; write author
 		mov edx, OFFSET BOOK_AUTHOR_BUF
 		INVOKE Str_length, edx
 		mov ecx, eax
 		mov eax, filehandle
 		call WriteToFile
-
 		; write comma separator
 		mov eax, filehandle
 		mov edx, OFFSET COMMA_BYTE
 		mov ecx, 1
 		call WriteToFile
-
 		; write publisher
 		mov edx, OFFSET BOOK_PUBLISHER_BUF
 		INVOKE Str_length, edx
 		mov ecx, eax
 		mov eax, filehandle
 		call WriteToFile
-
 		; write comma separator
 		mov eax, filehandle
 		mov edx, OFFSET COMMA_BYTE
 		mov ecx, 1
 		call WriteToFile
-
 		; write genre
 		mov edx, OFFSET BOOK_GENRE_BUF
 		INVOKE Str_length, edx
 		mov ecx, eax
 		mov eax, filehandle
 		call WriteToFile
-
 		; write comma separator
 		mov eax, filehandle
 		mov edx, OFFSET COMMA_BYTE
 		mov ecx, 1
 		call WriteToFile
-
 		; write year
 		mov edx, OFFSET BOOK_YEAR_BUF
 		INVOKE Str_length, edx
 		mov ecx, eax
 		mov eax, filehandle
 		call WriteToFile
-
 		; write comma separator
 		mov eax, filehandle
 		mov edx, OFFSET COMMA_BYTE
 		mov ecx, 1
 		call WriteToFile
-
 		; write ISBN
 		mov edx, OFFSET BOOK_ISBN_BUF
 		INVOKE Str_length, edx
 		mov ecx, eax
 		mov eax, filehandle
 		call WriteToFile
-
 		; write CRLF after the entry
 		mov eax, filehandle
 		mov edx, OFFSET CRLF_BYTES
 		mov ecx, 2
 		call WriteToFile
-
 		invoke CloseHandle, filehandle
-
 		; Display success message
 		INVOKE MSG_DISPLAY, ADDR BOOK_ADDED_MSG
 		
